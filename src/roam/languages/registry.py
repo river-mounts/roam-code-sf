@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 # Map file extension -> (tree-sitter language name, extractor language key)
 _EXTENSION_MAP: dict[str, str] = {
     ".vue": "vue",
+    ".svelte": "svelte",
     ".py": "python",
     ".pyi": "python",
     ".js": "javascript",
@@ -54,7 +55,7 @@ _SUPPORTED_LANGUAGES = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp",
     "ruby", "php", "c_sharp", "kotlin", "swift", "scala",
-    "vue",
+    "vue", "svelte",
 })
 
 
@@ -97,7 +98,7 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "javascript":
         from .javascript_lang import JavaScriptExtractor
         return JavaScriptExtractor()
-    elif language in ("typescript", "tsx", "vue"):
+    elif language in ("typescript", "tsx", "vue", "svelte"):
         from .typescript_lang import TypeScriptExtractor
         return TypeScriptExtractor()
     elif language == "go":

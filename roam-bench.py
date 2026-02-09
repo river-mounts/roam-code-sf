@@ -187,23 +187,28 @@ CODE_LANGUAGES = {
 
 
 def symbol_coverage(conn):
-    """% of code files that have at least one symbol (excludes docs/config/data files)."""
+    """% of code files that have at least one symbol.
+    Excludes docs/config/data files, build artifacts, and empty files."""
+    lang_filter = ",".join(f"'{l}'" for l in CODE_LANGUAGES)
+    # Exclude build artifacts, vendored code, minified files, and empty __init__.py
+    exclusion = """
+        AND path NOT LIKE '%/dist/%' AND path NOT LIKE '%\\dist\\%'
+        AND path NOT LIKE '%/vendor/%' AND path NOT LIKE '%\\vendor\\%'
+        AND path NOT LIKE '%/build/%' AND path NOT LIKE '%\\build\\%'
+        AND path NOT LIKE '%/node_modules/%' AND path NOT LIKE '%\\node_modules\\%'
+        AND path NOT LIKE '%.min.js' AND path NOT LIKE '%.min.css'
+    """
     code_files = conn.execute(
-        "SELECT COUNT(*) FROM files WHERE language IN ({})".format(
-            ",".join(f"'{l}'" for l in CODE_LANGUAGES)
-        )
+        f"SELECT COUNT(*) FROM files WHERE language IN ({lang_filter}) {exclusion}"
     ).fetchone()[0]
     if code_files == 0:
-        # Fallback to all files if no language match
         code_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         if code_files == 0:
             return 0.0, 0
     files_with_symbols = conn.execute(
-        "SELECT COUNT(DISTINCT s.file_id) FROM symbols s "
-        "JOIN files f ON f.id = s.file_id "
-        "WHERE f.language IN ({})".format(
-            ",".join(f"'{l}'" for l in CODE_LANGUAGES)
-        )
+        f"SELECT COUNT(DISTINCT s.file_id) FROM symbols s "
+        f"JOIN files f ON f.id = s.file_id "
+        f"WHERE f.language IN ({lang_filter}) {exclusion}"
     ).fetchone()[0]
     return (files_with_symbols / code_files) * 100, code_files
 

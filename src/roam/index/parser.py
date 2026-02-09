@@ -12,6 +12,7 @@ from tree_sitter_language_pack import get_language, get_parser
 # Map file extensions to tree-sitter language names
 EXTENSION_MAP = {
     ".vue": "vue",
+    ".svelte": "svelte",
     ".py": "python",
     ".js": "javascript",
     ".jsx": "javascript",
@@ -166,8 +167,8 @@ def parse_file(path: Path, language: str | None = None):
         log.warning("Unreadable file: %s", path)
         return None, None, None
 
-    # Vue SFC: extract <script> blocks and route to TS/JS
-    if language == "vue":
+    # Vue/Svelte SFC: extract <script> blocks and route to TS/JS
+    if language in ("vue", "svelte"):
         source, language = _preprocess_vue(source)
 
     try:
