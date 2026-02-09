@@ -1,10 +1,15 @@
 <div align="center">
 
-# roam
+```
+                    ┌─────────────────────────────────┐
+                    │   r o a m                       │
+                    │   codebase intelligence for AI  │
+                    └─────────────────────────────────┘
+```
 
-**give your AI agent a senior developer's intuition about your codebase**
+**20 commands. One pre-built index. Instant answers.**
 
-one command. instant answers. zero round-trips.
+Your AI agent shouldn't need 10 tool calls to understand a codebase.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -12,25 +17,17 @@ one command. instant answers. zero round-trips.
 
 </div>
 
----
-
-Your agent burns 5 tool calls and 30 seconds to answer "what calls this function?"
-
-Roam answers it in 0.3 seconds:
-
-```
-$ roam symbol Flask
-cls  Flask
-  class Flask(App)
-  src/flask/app.py:76
-  PR=0.0312  in=47  out=3
-Callers (47):
-  fn  create_app   (call)    src/flask/testing.py:18
-  fn  test_config  (import)  tests/test_config.py:4
-  ...
+```bash
+$ roam index                     # build once (~5s), then incremental
+$ roam symbol Flask              # definition + 47 callers + 3 callees + PageRank
+$ roam deps src/flask/app.py     # imports + imported-by with symbol breakdown
+$ roam impact create_app         # 34 symbols break if this changes
+$ roam health                    # cycles, god components, bottlenecks
+$ roam weather                   # hotspots: churn x complexity from git history
+$ roam diff                      # blast radius of your uncommitted changes
 ```
 
-Roam pre-indexes your entire codebase -- symbols, call graphs, dependencies, architecture, git history -- so any question is a single shell command away.
+Roam pre-indexes your entire codebase -- symbols, call graphs, dependencies, architecture, git history -- so any question is one shell command away. Built for AI agents, useful for humans.
 
 ## Table of Contents
 
