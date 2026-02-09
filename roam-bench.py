@@ -576,7 +576,7 @@ def compute_sub_scores(quality, commands):
     weights = {
         "coverage":   2.0,
         "misres":     2.5,
-        "ambiguity":  1.5,
+        "ambiguity":  1.0,
         "density":    1.5,
         "richness":   1.0,
         "commands":   1.5,

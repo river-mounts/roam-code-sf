@@ -412,17 +412,32 @@ class JavaScriptExtractor(LanguageExtractor):
         if func_node is None:
             return
 
-        name = self.node_text(func_node, source)
+        # Handle method calls: obj.method() -> extract "method"
+        if func_node.type == "member_expression":
+            prop = func_node.child_by_field_name("property")
+            if prop:
+                name = self.node_text(prop, source)
+            else:
+                name = self.node_text(func_node, source)
+        else:
+            name = self.node_text(func_node, source)
 
-        # Special handling for require()
+        # Special handling for require() - use module name as target
         if name == "require":
             args = node.child_by_field_name("arguments")
             if args:
                 for arg_child in args.children:
                     if arg_child.type == "string":
                         path = self.node_text(arg_child, source).strip("'\"")
+                        # Use last path segment as target name
+                        target = path.rsplit("/", 1)[-1] if "/" in path else path
+                        # Strip .js/.json extension
+                        for ext in (".js", ".json", ".mjs", ".cjs"):
+                            if target.endswith(ext):
+                                target = target[:-len(ext)]
+                                break
                         refs.append(self._make_reference(
-                            target_name=name,
+                            target_name=target,
                             kind="import",
                             line=node.start_point[0] + 1,
                             source_name=scope_name,
