@@ -63,6 +63,11 @@ EXTENSION_MAP = {
     ".sql": "sql",
     ".tf": "hcl",
     ".hcl": "hcl",
+    # Salesforce Apex
+    ".cls": "apex",
+    ".trigger": "apex",
+    # XML (used as base grammar for Salesforce metadata)
+    ".xml": "xml",
 }
 
 # Track parse error stats
@@ -70,7 +75,14 @@ parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
 
 
 def detect_language(file_path: str) -> str | None:
-    """Detect the tree-sitter language name from a file path."""
+    """Detect the tree-sitter language name from a file path.
+
+    Handles Salesforce -meta.xml sidecar files as a special case,
+    routing them through the XML grammar with the 'sfxml' extractor.
+    """
+    # Salesforce metadata sidecar files: *.xxx-meta.xml
+    if file_path.lower().endswith("-meta.xml"):
+        return "sfxml"
     _, ext = os.path.splitext(file_path)
     return EXTENSION_MAP.get(ext)
 
@@ -171,8 +183,13 @@ def parse_file(path: Path, language: str | None = None):
     if language in ("vue", "svelte"):
         source, language = _preprocess_vue(source)
 
+    # Salesforce XML metadata: use the xml grammar for parsing
+    grammar_language = language
+    if language == "sfxml":
+        grammar_language = "xml"
+
     try:
-        parser = get_parser(language)
+        parser = get_parser(grammar_language)
     except Exception:
         parse_errors["no_grammar"] += 1
         return None, None, None  # Grammar not available, expected skip
