@@ -42,12 +42,16 @@ _EXTENSION_MAP: dict[str, str] = {
     ".swift": "swift",
     ".scala": "scala",
     ".sc": "scala",
+    # Salesforce Apex
+    ".cls": "apex",
+    ".trigger": "apex",
 }
 
 # Languages with dedicated extractors
 _DEDICATED_EXTRACTORS = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp", "php",
+    "apex", "sfxml",
 })
 
 # All supported tree-sitter language names
@@ -56,6 +60,7 @@ _SUPPORTED_LANGUAGES = frozenset({
     "go", "rust", "java", "c", "cpp",
     "ruby", "php", "c_sharp", "kotlin", "swift", "scala",
     "vue", "svelte",
+    "apex", "sfxml",
 })
 
 
@@ -63,7 +68,12 @@ def get_language_for_file(path: str) -> str | None:
     """Determine the language for a file based on its extension.
 
     Returns the language name string, or None if unsupported.
+    Handles Salesforce -meta.xml sidecar files specially.
     """
+    # Check for Salesforce -meta.xml sidecar files first
+    lower = path.lower()
+    if lower.endswith("-meta.xml"):
+        return "sfxml"
     _, ext = os.path.splitext(path)
     ext = ext.lower()
     return _EXTENSION_MAP.get(ext)
@@ -86,7 +96,9 @@ def get_ts_language(language: str):
         raise ValueError(f"Unsupported language: {language}")
 
     from tree_sitter_language_pack import get_language
-    return get_language(language)
+    # sfxml uses the xml tree-sitter grammar
+    grammar_name = "xml" if language == "sfxml" else language
+    return get_language(grammar_name)
 
 
 @lru_cache(maxsize=None)
@@ -119,6 +131,12 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "php":
         from .php_lang import PhpExtractor
         return PhpExtractor()
+    elif language == "apex":
+        from .apex_lang import ApexExtractor
+        return ApexExtractor()
+    elif language == "sfxml":
+        from .sfxml_lang import SalesforceXmlExtractor
+        return SalesforceXmlExtractor()
     else:
         # Use generic extractor for tier-2 languages
         from .generic_lang import GenericExtractor
