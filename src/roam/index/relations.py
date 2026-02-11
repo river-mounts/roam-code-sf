@@ -52,19 +52,20 @@ def resolve_references(
     seen = set()
 
     for ref in references:
-        source_name = ref.get("source_name", "")
-        target_name = ref.get("target_name", "")
+        source_name = ref.get("source_name") or ""
+        target_name = ref.get("target_name") or ""
         kind = ref.get("kind", "call")
         line = ref.get("line")
-        source_file = ref.get("source_file", "")
+        source_file = ref.get("source_file") or ""
 
         if not target_name:
             continue
 
         # Find source symbol (the caller)
-        source_sym = _best_match(source_name, source_file, symbols_by_name)
+        source_sym = _best_match(source_name, source_file, symbols_by_name) if source_name else None
         if source_sym is None:
-            # Fallback for top-level code (e.g. Vue <script setup>, Python module scope):
+            # Fallback for top-level code (e.g. Vue <script setup>, Python module scope,
+            # LWC imports, Aura/sfxml references):
             # pick the closest symbol at or before the reference line
             source_sym = _closest_symbol(source_file, line, _file_symbols)
         if source_sym is None:
@@ -127,6 +128,15 @@ def resolve_references(
                         target_sym = sf_matched[0]
                     elif len(method_candidates) == 1:
                         target_sym = method_candidates[0]
+
+        # 4. Custom Label fallback: target_name like "MyLabel" might be
+        #    indexed as qualified "CustomLabels.MyLabel".  Try that lookup
+        #    so System.Label.X, $Label.c.X, and @salesforce/label/ all resolve.
+        if target_sym is None:
+            label_qn = f"CustomLabels.{target_name}"
+            label_matches = symbols_by_qualified.get(label_qn, [])
+            if label_matches:
+                target_sym = label_matches[0]
 
         if target_sym is None:
             continue
@@ -313,11 +323,53 @@ def _best_match(
                     return exported[0]
                 return import_matched[0]
 
+    # Prefer canonical Salesforce definition files over incidental
+    # mentions in custom metadata, profiles, or permission sets (Issue 7).
+    canonical = _canonical_sf_match(name, candidates)
+    if canonical:
+        return canonical
+
     # Fall back: prefer exported symbols globally
     exported = [s for s in candidates if s.get("is_exported")]
     if exported:
         return exported[0]
     return candidates[0]
+
+
+def _canonical_sf_match(name: str, candidates: list[dict]) -> dict | None:
+    """Prefer Salesforce canonical definition files when disambiguating.
+
+    Priority order:
+      1. .cls file for Apex classes (classes/Name.cls)
+      2. .object-meta.xml for SObjects (objects/Name/Name.object-meta.xml)
+      3. .field-meta.xml for custom fields
+      4. .labels-meta.xml for Custom Labels (kind='constant')
+      5. .trigger file for triggers
+    Falls back to None if no canonical file is found.
+    """
+    for cand in candidates:
+        fp = cand.get("file_path", "")
+        cname = cand.get("name", "")
+        # Apex class: classes/Name.cls
+        if fp.endswith(f"/{cname}.cls") or fp.endswith(f"/{cname}.trigger"):
+            return cand
+    for cand in candidates:
+        fp = cand.get("file_path", "")
+        cname = cand.get("name", "")
+        # SObject: objects/Name/Name.object-meta.xml
+        if fp.endswith(".object-meta.xml") and f"/{cname}/" in fp:
+            return cand
+    for cand in candidates:
+        fp = cand.get("file_path", "")
+        # Custom field: *.field-meta.xml
+        if fp.endswith(".field-meta.xml"):
+            return cand
+    for cand in candidates:
+        fp = cand.get("file_path", "")
+        # Custom Label: *.labels-meta.xml
+        if fp.endswith(".labels-meta.xml") and cand.get("kind") == "constant":
+            return cand
+    return None
 
 
 def _closest_symbol(

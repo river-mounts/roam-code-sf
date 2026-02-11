@@ -108,10 +108,22 @@ class SalesforceXmlExtractor(LanguageExtractor):
             ".customMetadata-meta.xml",
         ]
 
+    # Sidecar metadata types whose primary files (.cls, .trigger, .page,
+    # .component, .js) already provide the canonical symbol.  Emitting a
+    # duplicate from the -meta.xml clutters search results (Issue 8).
+    _SIDECAR_TYPES = frozenset({
+        "ApexClass", "ApexTrigger", "ApexPage", "ApexComponent",
+        "LightningComponentBundle",
+    })
+
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
         symbols: list[dict] = []
         self._root_type: str | None = None
         self._walk_xml(tree.root_node, source, symbols, parent_name=None, file_path=file_path)
+        # If the root element is a sidecar type, skip the top-level class
+        # symbol to avoid duplicating the primary file's symbol.
+        if self._root_type in self._SIDECAR_TYPES:
+            symbols = [s for s in symbols if s.get("parent_name") is not None]
         return symbols
 
     # Tags whose text always references another metadata entity
@@ -173,6 +185,19 @@ class SalesforceXmlExtractor(LanguageExtractor):
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         refs: list[dict] = []
         self._walk_xml_refs(tree.root_node, source, refs, file_path=file_path, parent_tag=None)
+        # Issue 6: Trigger_Handler custom metadata — derive handler class
+        # name from file name pattern Trigger_Handler.ClassName.md-meta.xml
+        import os
+        basename = os.path.basename(file_path)
+        if basename.startswith("Trigger_Handler.") and basename.endswith(".md-meta.xml"):
+            # "Trigger_Handler.AccountTriggerHandler.md-meta.xml" → "AccountTriggerHandler"
+            middle = basename[len("Trigger_Handler."):-len(".md-meta.xml")]
+            if middle and middle[0].isupper():
+                refs.append(self._make_reference(
+                    target_name=middle,
+                    kind="reference",
+                    line=1,
+                ))
         return refs
 
     # ------------------------------------------------------------------ #
@@ -185,6 +210,9 @@ class SalesforceXmlExtractor(LanguageExtractor):
             tag_name = self._get_element_tag(node, source)
             if tag_name and tag_name in _SF_METADATA_ELEMENTS:
                 kind = _SF_METADATA_ELEMENTS[tag_name]
+                # Track root element type for sidecar detection
+                if parent_name is None:
+                    self._root_type = tag_name
                 # Try to find the name of this metadata element
                 elem_name = self._get_child_text(node, source, "fullName")
                 if not elem_name:

@@ -21,6 +21,9 @@ def _is_test_file(path):
         return True
     if any(d in p for d in TEST_PATTERNS_DIR):
         return True
+    # Salesforce Apex convention: NameTest.cls or Name_Test.cls
+    if basename.endswith("Test.cls") or basename.endswith("_Test.cls"):
+        return True
     return False
 
 
@@ -71,8 +74,26 @@ def _test_map_symbol(conn, sym):
         else:
             click.echo(f"Test files importing {sym['file_path']}: (none)")
 
+    # Salesforce convention-based test discovery: NameTest or Name_Test
+    convention_tests = []
+    sym_name = sym["name"]
+    for suffix in ("Test", "_Test"):
+        test_name = f"{sym_name}{suffix}"
+        rows = conn.execute(
+            "SELECT s.name, s.kind, f.path as file_path, s.line_start "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.name = ? AND s.kind = 'class'",
+            (test_name,),
+        ).fetchall()
+        convention_tests.extend(rows)
+
+    if convention_tests:
+        click.echo(f"\nConvention-matched test classes ({len(convention_tests)}):")
+        for t in convention_tests:
+            click.echo(f"  {t['name']:<25s} {abbrev_kind(t['kind'])}  {loc(t['file_path'], t['line_start'])}")
+
     # Suggest when no tests found
-    if not direct_tests and not test_importers:
+    if not direct_tests and not test_importers and not convention_tests:
         pr_row = conn.execute(
             "SELECT pagerank, in_degree FROM graph_metrics WHERE symbol_id = ?",
             (sym["id"],),
@@ -222,6 +243,18 @@ def _test_map_symbol_json(conn, sym):
         ).fetchall()
         test_importers = [r for r in importers if _is_test_file(r["path"])]
 
+    # Convention-matched test classes (Salesforce: NameTest, Name_Test)
+    convention_tests = []
+    for suffix in ("Test", "_Test"):
+        test_name = f"{sym['name']}{suffix}"
+        rows = conn.execute(
+            "SELECT s.name, s.kind, f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.name = ? AND s.kind = 'class'",
+            (test_name,),
+        ).fetchall()
+        convention_tests.extend(rows)
+
     click.echo(to_json({
         "name": sym["name"], "kind": sym["kind"],
         "location": loc(sym["file_path"], sym["line_start"]),
@@ -233,6 +266,10 @@ def _test_map_symbol_json(conn, sym):
         "test_importers": [
             {"path": r["path"], "symbols_used": r["symbol_count"]}
             for r in test_importers
+        ],
+        "convention_tests": [
+            {"name": t["name"], "kind": t["kind"], "file": t["file_path"]}
+            for t in convention_tests
         ],
     }))
 

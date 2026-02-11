@@ -74,6 +74,18 @@ def impact(ctx, name):
                     loc(node.get("file_path", "?"), None),
                 ])
 
+        # Convention-matched test classes: NameTest, Name_Test (Salesforce)
+        sym_name = sym["name"]
+        for suffix in ("Test", "_Test"):
+            test_name = f"{sym_name}{suffix}"
+            test_rows = conn.execute(
+                "SELECT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
+                "WHERE s.name = ? AND s.kind = 'class'",
+                (test_name,),
+            ).fetchall()
+            for r in test_rows:
+                affected_files.add(r["path"])
+
         if json_mode:
             json_deps = {}
             for edge_kind, items in by_kind.items():
