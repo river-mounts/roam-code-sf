@@ -423,6 +423,9 @@ class SalesforceXmlExtractor(LanguageExtractor):
         action_type = self._get_child_text(node, source, "actionType")
 
         if action_name:
+            # Strip Salesforce namespace prefix: c:ComponentName → ComponentName
+            if ":" in action_name:
+                action_name = action_name.split(":", 1)[1]
             kind = "call" if action_type and action_type.lower() == "apex" else "reference"
             refs.append(self._make_reference(
                 target_name=action_name,
