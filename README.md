@@ -495,11 +495,11 @@ Measured on the [benchmark suite](#quality-benchmark) repos (single-threaded, in
 
 | Project | Language | Files | Symbols | Edges | Index Time | Rate |
 |---------|----------|-------|---------|-------|-----------|------|
-| Express | JS | 211 | 624 | 804 | 3s | 70 files/s |
-| Axios | JS | 237 | 1,065 | 868 | 6s | 41 files/s |
-| Vue | TS | 697 | 5,335 | 8,984 | 25s | 28 files/s |
-| Laravel | PHP | 3,058 | 39,097 | 38,045 | 1m46s | 29 files/s |
-| Svelte | TS | 8,445 | 16,445 | 19,618 | 2m40s | 52 files/s |
+| Express | JS | 211 | 624 | 932 | 1s | 155 files/s |
+| Axios | JS | 237 | 1,065 | 1,265 | 2s | 153 files/s |
+| Vue | TS | 697 | 5,335 | 11,851 | 5s | 146 files/s |
+| Laravel | PHP | 3,061 | 39,136 | 39,274 | 22s | 137 files/s |
+| Svelte | TS | 8,456 | 16,463 | 24,373 | 23s | 360 files/s |
 
 Incremental index (no changes): **<1s**. Only re-parses files with changed mtime + SHA-256 hash.
 
@@ -513,18 +513,18 @@ Roam ships with an automated benchmark suite (`roam-bench.py`) that indexes real
 
 | Repo | Language | Score | Coverage | Ambiguity | Edge Density | Qualified Names | Commands |
 |------|----------|-------|----------|-----------|--------------|-----------------|----------|
-| Laravel | PHP | **9.55** | 91.2% | 0.6% | 0.97 | 91.0% | 29/29 |
-| Vue | TS | **9.27** | 85.8% | 17.2% | 1.68 | 49.5% | 29/29 |
-| Svelte | TS | **9.04** | 94.7% | 57.6% | 1.19 | 25.2% | 29/29 |
-| Axios | JS | **8.98** | 85.9% | 38.4% | 0.82 | 40.6% | 29/29 |
-| Express | JS | **8.46** | 96.0% | 37.1% | 1.29 | 15.1% | 29/29 |
+| Laravel | PHP | **9.55** | 91.2% | 0.6% | 1.00 | 91.0% | 29/29 |
+| Vue | TS | **9.34** | 85.8% | 18.1% | 2.22 | 49.5% | 29/29 |
+| Svelte | TS | **8.98** | 94.7% | 61.2% | 1.48 | 25.2% | 29/29 |
+| Express | JS | **8.76** | 96.0% | 38.6% | 1.49 | 15.1% | 29/29 |
+| Axios | JS | **8.69** | 85.9% | 35.3% | 1.19 | 40.6% | 29/29 |
 
 **Per-language average:**
 
 | Language | Avg Score | Repos |
 |----------|-----------|-------|
 | PHP | 9.55 | Laravel |
-| TypeScript | 9.15 | Vue, Svelte |
+| TypeScript | 9.16 | Vue, Svelte |
 | JavaScript | 8.72 | Express, Axios |
 
 **What the metrics mean:**
