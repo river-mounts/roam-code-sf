@@ -249,13 +249,23 @@ class SalesforceXmlExtractor(LanguageExtractor):
         Context-dependent tags (field, object, class, name) are only extracted when
         they appear inside specific parent elements (e.g., <field> inside <fieldPermissions>).
         Formula text is scanned for Object.Field__c patterns.
+        Flow actionCalls with actionType=apex create "call" edges to Apex classes.
+        Custom metadata values with class-reference fields create reference edges.
         """
         if node.type == "element":
             tag_name = self._get_element_tag(node, source)
 
             if tag_name:
+                # P1C: Flow actionCalls — detect Apex invocable actions
+                if tag_name == "actionCalls":
+                    self._extract_action_call_refs(node, source, refs)
+
+                # P1F: Custom metadata values — detect class reference fields
+                elif tag_name == "values":
+                    self._extract_custom_metadata_class_refs(node, source, refs)
+
                 # Always-reference tags
-                if tag_name in self._ALWAYS_REF_TAGS:
+                elif tag_name in self._ALWAYS_REF_TAGS:
                     text = self._get_element_text(node, source)
                     if text:
                         refs.append(self._make_reference(
@@ -369,3 +379,49 @@ class SalesforceXmlExtractor(LanguageExtractor):
         # Strip remaining extension
         name, _ = os.path.splitext(basename)
         return name if name else basename
+
+    # ------------------------------------------------------------------ #
+    #  Specialised reference extractors                                   #
+    # ------------------------------------------------------------------ #
+
+    def _extract_action_call_refs(self, node, source: bytes, refs: list[dict]):
+        """Extract references from Flow <actionCalls> elements.
+
+        When actionType is 'apex', the actionName refers to an Apex class
+        with an @InvocableMethod.  Creates a 'call' edge for Apex actions
+        and a 'reference' edge for other action types.
+        """
+        action_name = self._get_child_text(node, source, "actionName")
+        action_type = self._get_child_text(node, source, "actionType")
+
+        if action_name:
+            kind = "call" if action_type and action_type.lower() == "apex" else "reference"
+            refs.append(self._make_reference(
+                target_name=action_name,
+                kind=kind,
+                line=node.start_point[0] + 1,
+            ))
+
+    def _extract_custom_metadata_class_refs(self, node, source: bytes, refs: list[dict]):
+        """Extract Apex class references from custom metadata <values> elements.
+
+        Detects fields whose name suggests a class reference (e.g. Handler_Class__c,
+        Apex_Class__c) and extracts the corresponding value as a reference edge.
+        This enables edges from Trigger_Handler metadata to handler Apex classes.
+        """
+        field_name = self._get_child_text(node, source, "field")
+        if not field_name:
+            return
+
+        # Only process fields that likely hold Apex class names
+        field_lower = field_name.lower()
+        if not any(kw in field_lower for kw in ("class", "handler")):
+            return
+
+        value_text = self._get_child_text(node, source, "value")
+        if value_text and len(value_text) > 1 and value_text[0].isupper() and value_text.replace("_", "").isalnum():
+            refs.append(self._make_reference(
+                target_name=value_text,
+                kind="reference",
+                line=node.start_point[0] + 1,
+            ))

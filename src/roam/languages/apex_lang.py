@@ -22,6 +22,8 @@ _SOQL_FROM_RE = re.compile(r'\bFROM\s+([A-Za-z_]\w+)', re.IGNORECASE)
 _SOQL_FIELD_RE = re.compile(r'\b([A-Z]\w+)\.([A-Za-z_]\w+)')
 # Regex to extract System.Label.XYZ references
 _SYSTEM_LABEL_RE = re.compile(r'\bSystem\s*\.\s*Label\s*\.\s*([A-Za-z_]\w+)')
+# Regex to extract Label.XYZ references (without System. prefix)
+_LABEL_RE = re.compile(r'\bLabel\s*\.\s*([A-Za-z_]\w+)')
 # Apex standard library types to skip when extracting type references
 _APEX_BUILTIN_TYPES = frozenset({
     "String", "Integer", "Long", "Double", "Decimal", "Boolean", "Date",
@@ -571,7 +573,7 @@ class ApexExtractor(LanguageExtractor):
             ))
 
     def _extract_field_access(self, node, source, refs, scope_name):
-        """Extract Trigger.isInsert / Trigger.new and System.Label.X references."""
+        """Extract Trigger.isInsert / Trigger.new, System.Label.X, and Label.X references."""
         text = self.node_text(node, source)
         if text.startswith("Trigger."):
             refs.append(self._make_reference(
@@ -589,6 +591,16 @@ class ApexExtractor(LanguageExtractor):
                 line=node.start_point[0] + 1,
                 source_name=scope_name,
             ))
+        # Label.MyLabel (without System prefix) → reference to custom label
+        elif text.startswith("Label."):
+            m2 = _LABEL_RE.match(text)
+            if m2:
+                refs.append(self._make_reference(
+                    target_name=m2.group(1),
+                    kind="reference",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                ))
 
     def _extract_soql_refs(self, node, source, refs, scope_name):
         """Extract SObject and field references from SOQL/SOSL query_expression nodes."""
