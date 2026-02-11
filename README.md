@@ -7,13 +7,12 @@
 ██   ██  ██████  ██   ██ ██      ██
 </pre>
 
-**codebase intelligence for AI**
+**codebase intelligence for AI — Salesforce edition**
 
-v4.3.1 · 29 commands · one pre-built index · instant answers
+Fork of [roam-code](https://github.com/Cranot/roam-code) v4.3.1 with comprehensive Salesforce metadata support: Apex, LWC, Aura, Visualforce, and XML metadata extractors with cross-language edge resolution.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/Cranot/roam-code/actions/workflows/ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/ci.yml)
 
 </div>
 
@@ -21,16 +20,17 @@ v4.3.1 · 29 commands · one pre-built index · instant answers
 
 Your AI agent shouldn't need 10 tool calls to understand a codebase. Roam pre-indexes everything -- symbols, call graphs, dependencies, architecture, git history -- so any question is one shell command away.
 
+This fork adds **comprehensive Salesforce support**: Apex classes/triggers, Lightning Web Components (with `@salesforce/apex/*` cross-language edges), Aura components, Visualforce pages, and all XML metadata formats (`*-meta.xml`, profiles, flows, custom objects).
+
 ```bash
 $ roam index                     # build once (~5s), then incremental
-$ roam symbol Flask              # definition + 47 callers + 3 callees + PageRank
-$ roam context Flask             # AI-ready: files-to-read with exact line ranges
-$ roam deps src/flask/app.py     # imports + imported-by with symbol breakdown
-$ roam impact create_app         # 34 symbols break if this changes
-$ roam split src/flask/app.py    # internal groups with isolation % + extraction suggestions
-$ roam why Flask                 # role, reach, criticality, one-line verdict
-$ roam risk                      # domain-weighted risk ranking of all symbols
+$ roam symbol AccountHandler     # Apex class: methods, callers, callees
+$ roam deps force-app/.../AccountHandler.cls  # what depends on this Apex class
+$ roam impact getAccounts        # blast radius if this @AuraEnabled method changes
+$ roam map                       # project overview with apex, aura, visualforce stats
 $ roam health                    # cycles, god components, bottlenecks + summary
+$ roam context Flask             # AI-ready: files-to-read with exact line ranges
+$ roam risk                      # domain-weighted risk ranking of all symbols
 $ roam pr-risk HEAD~3..HEAD      # 0-100 risk score + dead exports + reviewers
 $ roam diff                      # blast radius of your uncommitted changes
 ```
@@ -57,16 +57,16 @@ $ roam diff                      # blast radius of your uncommitted changes
 
 ```bash
 # Recommended for CLI tools (isolated environment)
-pipx install git+https://github.com/Cranot/roam-code.git
+pipx install git+https://github.com/river-mounts/roam-code-sf.git
 
 # Or with uv (fastest)
-uv tool install git+https://github.com/Cranot/roam-code.git
+uv tool install git+https://github.com/river-mounts/roam-code-sf.git
 
 # Or with pip
-pip install git+https://github.com/Cranot/roam-code.git
+pip install git+https://github.com/river-mounts/roam-code-sf.git
 ```
 
-> **Note:** Roam is not yet published to PyPI. Install from source as shown above, or clone and `pip install -e .` for development.
+> **Note:** This fork is not published to PyPI. Install from source as shown above, or clone and `pip install -e .` for development. For the upstream version without Salesforce support, see [Cranot/roam-code](https://github.com/Cranot/roam-code).
 
 Verify the install:
 
@@ -113,8 +113,8 @@ The index is stored at `.roam/index.db` in your project root. Run `roam --help` 
 <summary><strong>Try it on Roam itself</strong></summary>
 
 ```bash
-git clone https://github.com/Cranot/roam-code.git
-cd roam-code
+git clone https://github.com/river-mounts/roam-code-sf.git
+cd roam-code-sf
 pip install -e .
 roam index --force
 roam map
@@ -648,7 +648,7 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 # Update to latest
 pipx upgrade roam-code            # if installed with pipx
 uv tool upgrade roam-code         # if installed with uv
-pip install --upgrade git+https://github.com/Cranot/roam-code.git  # if installed with pip
+pip install --upgrade git+https://github.com/river-mounts/roam-code-sf.git  # if installed with pip
 
 # Uninstall
 pipx uninstall roam-code          # if installed with pipx
@@ -662,11 +662,11 @@ To clean up project-local data, delete the `.roam/` directory from your project 
 
 ```bash
 # Clone and install in dev mode
-git clone https://github.com/Cranot/roam-code.git
-cd roam-code
+git clone https://github.com/river-mounts/roam-code-sf.git
+cd roam-code-sf
 pip install -e .
 
-# Run tests (~330 tests across 20 languages, 3 OS, Python 3.10-3.13)
+# Run tests (~390 tests across 20 languages including Salesforce)
 pytest tests/
 
 # Index roam itself
@@ -689,7 +689,7 @@ roam map
 <summary>Click to expand</summary>
 
 ```
-roam-code/
+roam-code-sf/
 ├── pyproject.toml
 ├── src/roam/
 │   ├── cli.py                      # Click CLI entry point (29 commands)
@@ -751,8 +751,8 @@ roam-code/
 Contributions are welcome! Here's how to get started:
 
 ```bash
-git clone https://github.com/Cranot/roam-code.git
-cd roam-code
+git clone https://github.com/river-mounts/roam-code-sf.git
+cd roam-code-sf
 pip install -e .
 pytest tests/   # All tests must pass before submitting
 ```
