@@ -113,6 +113,21 @@ def resolve_references(
                 ref_kind=kind, source_parent=source_parent, import_map=import_map,
             )
 
+        # 3. Salesforce Apex import fallback: target_name is "Class.method"
+        #    but symbols_by_name only has "method".  Extract the method name,
+        #    look it up, and use import-path filtering to pick the right class.
+        if target_sym is None:
+            import_path = ref.get("import_path") or ""
+            if import_path.startswith("@salesforce/apex/") and "." in target_name:
+                method_name = target_name.rsplit(".", 1)[1]
+                method_candidates = symbols_by_name.get(method_name, [])
+                if method_candidates:
+                    sf_matched = _resolve_salesforce_import(import_path, method_candidates)
+                    if sf_matched:
+                        target_sym = sf_matched[0]
+                    elif len(method_candidates) == 1:
+                        target_sym = method_candidates[0]
+
         if target_sym is None:
             continue
 
@@ -149,9 +164,16 @@ def _resolve_salesforce_import(import_path: str, candidates: list[dict]) -> list
     if import_path.startswith("@salesforce/apex/"):
         apex_ref = import_path[len("@salesforce/apex/"):]
         class_name = apex_ref.split(".")[0]
-        return [c for c in candidates
-                if c.get("file_path", "").endswith(f"/{class_name}.cls")
-                or c.get("file_path", "").endswith(f"/{class_name}.trigger")]
+        matches = [c for c in candidates
+                   if c.get("file_path", "").endswith(f"/{class_name}.cls")
+                   or c.get("file_path", "").endswith(f"/{class_name}.trigger")]
+        # Salesforce namespace-prefixed imports: "ns_ClassName" -> try "ClassName"
+        if not matches and "_" in class_name:
+            stripped = class_name.split("_", 1)[1]
+            matches = [c for c in candidates
+                       if c.get("file_path", "").endswith(f"/{stripped}.cls")
+                       or c.get("file_path", "").endswith(f"/{stripped}.trigger")]
+        return matches
     if import_path.startswith("@salesforce/schema/"):
         schema_ref = import_path[len("@salesforce/schema/"):]
         # Match by qualified_name or simple name (last segment)
@@ -164,6 +186,9 @@ def _resolve_salesforce_import(import_path: str, candidates: list[dict]) -> list
         if label_ref.startswith("c."):
             label_ref = label_ref[2:]
         return [c for c in candidates if c.get("name", "") == label_ref]
+    if import_path.startswith("@salesforce/messageChannel/"):
+        channel_ref = import_path[len("@salesforce/messageChannel/"):]
+        return [c for c in candidates if c.get("name", "") == channel_ref]
     return []
 
 

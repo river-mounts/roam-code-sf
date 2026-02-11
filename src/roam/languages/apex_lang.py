@@ -9,9 +9,24 @@ Salesforce-specific constructs handled here:
   - Annotations: @AuraEnabled, @IsTest, @TestVisible, @InvocableMethod, etc.
   - DML expressions: insert, update, delete, upsert, undelete, merge
   - SOQL/SOSL inline queries (detected as references to SObject types)
+  - System.Label.X custom label references
+  - Generic type parameter references (List<Account>, Map<String,SObject>)
 """
 
+import re
+
 from .base import LanguageExtractor
+
+# Regex to extract SObject/field refs from SOQL text
+_SOQL_FROM_RE = re.compile(r'\bFROM\s+([A-Za-z_]\w+)', re.IGNORECASE)
+_SOQL_FIELD_RE = re.compile(r'\b([A-Z]\w+)\.([A-Za-z_]\w+)')
+# Regex to extract System.Label.XYZ references
+_SYSTEM_LABEL_RE = re.compile(r'\bSystem\s*\.\s*Label\s*\.\s*([A-Za-z_]\w+)')
+# Apex standard library types to skip when extracting type references
+_APEX_BUILTIN_TYPES = frozenset({
+    "String", "Integer", "Long", "Double", "Decimal", "Boolean", "Date",
+    "Datetime", "Time", "Id", "Blob", "Object", "void", "SObject",
+})
 
 
 class ApexExtractor(LanguageExtractor):
@@ -334,6 +349,13 @@ class ApexExtractor(LanguageExtractor):
             sig = "\n".join(annotations) + "\n" + sig
 
         qualified = f"{parent_name}.{name}" if parent_name else name
+
+        # Extract type references from return type and parameters
+        if ret_type:
+            self._extract_type_refs(ret_type, source, self._pending_inherits, qualified)
+        if params:
+            self._extract_type_refs(params, source, self._pending_inherits, qualified)
+
         symbols.append(self._make_symbol(
             name=name,
             kind="method",
@@ -387,7 +409,12 @@ class ApexExtractor(LanguageExtractor):
                 if child.type in ("type_identifier", "generic_type", "boolean_type",
                                   "void_type", "scoped_type_identifier"):
                     type_text = self.node_text(child, source)
+                    type_node = child
                     break
+
+        # Extract type references (e.g., List<Account> → Account)
+        if type_node:
+            self._extract_type_refs(type_node, source, self._pending_inherits, parent_name)
 
         is_static = self._has_modifier(node, source, "static")
         is_final = self._has_modifier(node, source, "final")
@@ -466,6 +493,8 @@ class ApexExtractor(LanguageExtractor):
                 self._extract_dml(child, source, refs, scope_name)
             elif child.type == "field_access":
                 self._extract_field_access(child, source, refs, scope_name)
+            elif child.type == "query_expression":
+                self._extract_soql_refs(child, source, refs, scope_name)
             else:
                 new_scope = scope_name
                 if child.type in ("class_declaration", "interface_declaration", "enum_declaration"):
@@ -542,7 +571,7 @@ class ApexExtractor(LanguageExtractor):
             ))
 
     def _extract_field_access(self, node, source, refs, scope_name):
-        """Extract Trigger.isInsert / Trigger.new style references."""
+        """Extract Trigger.isInsert / Trigger.new and System.Label.X references."""
         text = self.node_text(node, source)
         if text.startswith("Trigger."):
             refs.append(self._make_reference(
@@ -551,3 +580,63 @@ class ApexExtractor(LanguageExtractor):
                 line=node.start_point[0] + 1,
                 source_name=scope_name,
             ))
+        # System.Label.MyLabel → reference to custom label
+        m = _SYSTEM_LABEL_RE.match(text)
+        if m:
+            refs.append(self._make_reference(
+                target_name=m.group(1),
+                kind="reference",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            ))
+
+    def _extract_soql_refs(self, node, source, refs, scope_name):
+        """Extract SObject and field references from SOQL/SOSL query_expression nodes."""
+        self._walk_soql_node(node, source, refs, scope_name)
+
+    def _walk_soql_node(self, node, source, refs, scope_name):
+        """Recursively walk SOQL AST nodes to extract SObject and field refs."""
+        if node.type == "storage_identifier":
+            # FROM clause target (SObject name)
+            name = self.node_text(node, source)
+            refs.append(self._make_reference(
+                target_name=name,
+                kind="reference",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            ))
+            return
+        if node.type == "dotted_identifier":
+            # Relationship traversal: Account.Name, Contact.Account.Name
+            text = self.node_text(node, source)
+            parts = text.split(".")
+            for part in parts:
+                refs.append(self._make_reference(
+                    target_name=part,
+                    kind="reference",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                ))
+            return
+        for child in node.children:
+            self._walk_soql_node(child, source, refs, scope_name)
+
+    def _extract_type_refs(self, node, source, refs, scope_name):
+        """Extract type references from generic types like List<Account>, Map<String, Contact>."""
+        if node.type == "type_identifier":
+            name = self.node_text(node, source)
+            if name not in _APEX_BUILTIN_TYPES:
+                refs.append(self._make_reference(
+                    target_name=name,
+                    kind="reference",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                ))
+        elif node.type == "generic_type":
+            # Extract inner type arguments: List<Account> → Account
+            for child in node.children:
+                if child.type == "type_arguments":
+                    self._extract_type_refs(child, source, refs, scope_name)
+        else:
+            for child in node.children:
+                self._extract_type_refs(child, source, refs, scope_name)
