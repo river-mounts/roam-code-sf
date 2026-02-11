@@ -186,6 +186,9 @@ def _resolve_salesforce_import(import_path: str, candidates: list[dict]) -> list
         if label_ref.startswith("c."):
             label_ref = label_ref[2:]
         return [c for c in candidates if c.get("name", "") == label_ref]
+    if import_path.startswith("@salesforce/messageChannel/"):
+        channel_ref = import_path[len("@salesforce/messageChannel/"):]
+        return [c for c in candidates if c.get("name", "") == channel_ref]
     return []
 
 

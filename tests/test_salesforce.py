@@ -1540,3 +1540,258 @@ class TestPathHeuristicEdgeCases:
         """Compound extension like .field-meta.xml still detected as sfxml."""
         from roam.languages.registry import get_language_for_file
         assert get_language_for_file("Industry__c.field-meta.xml") == "sfxml"
+
+
+# ============================================================================
+# Phase 3: Gap-closure tests
+# ============================================================================
+
+
+class TestApexSoqlReferences:
+    """Test SOQL/SOSL reference extraction from Apex code."""
+
+    def test_soql_from_clause_sobject(self, apex_extractor, apex_parser):
+        """SOQL FROM clause should extract SObject reference."""
+        tree, source = _parse_apex(apex_parser, """
+public class AccountService {
+    public List<Account> getAccounts() {
+        return [SELECT Id, Name FROM Account WHERE IsActive = true];
+    }
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "AccountService.cls")
+        refs = apex_extractor.extract_references(tree, source, "AccountService.cls")
+        targets = {r["target_name"] for r in refs}
+        assert "Account" in targets
+
+    def test_soql_relationship_field(self, apex_extractor, apex_parser):
+        """SOQL relationship traversal should extract field references."""
+        tree, source = _parse_apex(apex_parser, """
+public class ContactService {
+    public void query() {
+        List<Contact> c = [SELECT Account.Name FROM Contact];
+    }
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "ContactService.cls")
+        refs = apex_extractor.extract_references(tree, source, "ContactService.cls")
+        targets = {r["target_name"] for r in refs}
+        assert "Contact" in targets
+        assert "Name" in targets
+
+
+class TestApexSystemLabel:
+    """Test System.Label.X custom label references in Apex."""
+
+    def test_system_label_reference(self, apex_extractor, apex_parser):
+        """System.Label.MyLabel should be extracted as a reference."""
+        tree, source = _parse_apex(apex_parser, """
+public class LabelUser {
+    public String getLabel() {
+        return System.Label.Welcome_Message;
+    }
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "LabelUser.cls")
+        refs = apex_extractor.extract_references(tree, source, "LabelUser.cls")
+        targets = {r["target_name"] for r in refs}
+        assert "Welcome_Message" in targets
+
+
+class TestApexTypeReferences:
+    """Test generic type parameter extraction from Apex declarations."""
+
+    def test_list_type_parameter(self, apex_extractor, apex_parser):
+        """List<Account> should extract Account as a type reference."""
+        tree, source = _parse_apex(apex_parser, """
+public class AccountService {
+    public List<Account> accounts;
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "AccountService.cls")
+        refs = apex_extractor.extract_references(tree, source, "AccountService.cls")
+        ref_targets = {r["target_name"] for r in refs}
+        assert "Account" in ref_targets
+
+    def test_map_type_parameters(self, apex_extractor, apex_parser):
+        """Map<String, Contact> should extract Contact but skip String (builtin)."""
+        tree, source = _parse_apex(apex_parser, """
+public class ContactService {
+    public Map<String, Contact> contactMap;
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "ContactService.cls")
+        refs = apex_extractor.extract_references(tree, source, "ContactService.cls")
+        ref_targets = {r["target_name"] for r in refs}
+        assert "Contact" in ref_targets
+        assert "String" not in ref_targets
+
+    def test_method_return_type_reference(self, apex_extractor, apex_parser):
+        """Method return type should extract type reference."""
+        tree, source = _parse_apex(apex_parser, """
+public class OrderService {
+    public List<Order__c> getOrders() { return null; }
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "OrderService.cls")
+        refs = apex_extractor.extract_references(tree, source, "OrderService.cls")
+        ref_targets = {r["target_name"] for r in refs}
+        assert "Order__c" in ref_targets
+
+
+class TestLmsChannelImport:
+    """Test Lightning Message Service channel import resolution."""
+
+    def test_lms_channel_import_target(self):
+        """@salesforce/messageChannel should be resolved to the channel name."""
+        from roam.languages.javascript_lang import JavaScriptExtractor
+        ext = JavaScriptExtractor()
+        result = ext._resolve_salesforce_import_target(
+            "@salesforce/messageChannel/Record_Selected__c"
+        )
+        assert result == "Record_Selected__c"
+
+    def test_lms_import_resolution(self):
+        """LMS channel import should resolve to matching symbol."""
+        from roam.index.relations import _resolve_salesforce_import
+        candidates = [
+            {"name": "Record_Selected__c", "file_path": "messageChannels/Record_Selected__c.messageChannel-meta.xml"},
+            {"name": "Other__c", "file_path": "messageChannels/Other__c.messageChannel-meta.xml"},
+        ]
+        matches = _resolve_salesforce_import(
+            "@salesforce/messageChannel/Record_Selected__c",
+            candidates,
+        )
+        assert len(matches) == 1
+        assert matches[0]["name"] == "Record_Selected__c"
+
+
+class TestSfXmlExpandedCoverage:
+    """Test expanded XML metadata reference extraction for permission sets, flows, etc."""
+
+    def test_flow_object_type_reference(self, sfxml_extractor, xml_parser):
+        """Flow objectType tag should be extracted as a reference."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordLookups>
+        <name>Get_Accounts</name>
+        <objectType>Account</objectType>
+    </recordLookups>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(tree, source, "MyFlow.flow-meta.xml")
+        targets = {r["target_name"] for r in refs}
+        assert "Account" in targets
+
+    def test_flow_record_type_reference(self, sfxml_extractor, xml_parser):
+        """Flow recordType tag should be extracted as a reference."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <recordCreates>
+        <name>Create_Case</name>
+        <recordType>Support_Case</recordType>
+    </recordCreates>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(tree, source, "MyFlow.flow-meta.xml")
+        targets = {r["target_name"] for r in refs}
+        assert "Support_Case" in targets
+
+    def test_flow_input_output_references(self, sfxml_extractor, xml_parser):
+        """Flow inputReference and outputReference should be extracted."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <assignments>
+        <name>Set_Values</name>
+        <assignmentItems>
+            <inputReference>varAccountId</inputReference>
+            <outputReference>recordId</outputReference>
+        </assignmentItems>
+    </assignments>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(tree, source, "MyFlow.flow-meta.xml")
+        targets = {r["target_name"] for r in refs}
+        assert "varAccountId" in targets
+        assert "recordId" in targets
+
+    def test_permission_set_tab_visibility(self, sfxml_extractor, xml_parser):
+        """Permission set tabVisibilities should extract tab reference."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>My Perm Set</label>
+    <tabVisibilities>
+        <tab>standard-Account</tab>
+        <visibility>Visible</visibility>
+    </tabVisibilities>
+</PermissionSet>
+""")
+        refs = sfxml_extractor.extract_references(tree, source, "MyPermSet.permissionset-meta.xml")
+        targets = {r["target_name"] for r in refs}
+        assert "standard-Account" in targets
+
+    def test_named_credential_reference(self, sfxml_extractor, xml_parser):
+        """Named credential tag should be extracted as a reference."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionCalls>
+        <name>Call_External</name>
+        <namedCredential>My_API_Credential</namedCredential>
+    </actionCalls>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(tree, source, "MyFlow.flow-meta.xml")
+        targets = {r["target_name"] for r in refs}
+        assert "My_API_Credential" in targets
+
+
+class TestVisualforceMergeFields:
+    """Test Visualforce merge field expression extraction."""
+
+    def test_vf_label_reference(self, vf_extractor, xml_parser):
+        """VF {!$Label.MyLabel} should extract the label name."""
+        tree, source = _parse_xml(xml_parser, """<apex:page>
+    <apex:outputText value="{!$Label.Welcome_Message}"/>
+</apex:page>
+""")
+        refs = vf_extractor.extract_references(tree, source, "MyPage.page")
+        targets = {r["target_name"] for r in refs}
+        assert "Welcome_Message" in targets
+
+    def test_vf_custom_setting_reference(self, vf_extractor, xml_parser):
+        """VF {!$Setup.MySetting__c.Field} should extract the custom setting."""
+        tree, source = _parse_xml(xml_parser, """<apex:page>
+    <apex:outputText value="{!$Setup.AppConfig__c.Endpoint}"/>
+</apex:page>
+""")
+        refs = vf_extractor.extract_references(tree, source, "MyPage.page")
+        targets = {r["target_name"] for r in refs}
+        assert "AppConfig__c" in targets
+
+
+class TestAuraLabelAndDataService:
+    """Test Aura $Label and force:recordData references."""
+
+    def test_aura_label_reference(self, xml_parser):
+        """$Label.c.MyLabel in Aura attribute value should be extracted."""
+        from roam.languages.aura_lang import AuraExtractor
+        ext = AuraExtractor()
+        tree, source = _parse_xml(xml_parser, """<aura:component>
+    <lightning:button label="{!$Label.c.Save_Button}"/>
+</aura:component>
+""")
+        refs = ext.extract_references(tree, source, "MyComp.cmp")
+        targets = {r["target_name"] for r in refs}
+        assert "Save_Button" in targets
+
+    def test_force_record_data(self, xml_parser):
+        """force:recordData with sObjectType should extract SObject reference."""
+        from roam.languages.aura_lang import AuraExtractor
+        ext = AuraExtractor()
+        tree, source = _parse_xml(xml_parser, """<aura:component>
+    <force:recordData aura:id="record" sObjectType="Account" fields="Name,Industry"/>
+</aura:component>
+""")
+        refs = ext.extract_references(tree, source, "RecordView.cmp")
+        targets = {r["target_name"] for r in refs}
+        assert "Account" in targets

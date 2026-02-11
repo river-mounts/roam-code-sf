@@ -124,6 +124,12 @@ class SalesforceXmlExtractor(LanguageExtractor):
         "lookupFilter",
         # Automation cross-references
         "actionName", "flowName", "targetWorkflow",
+        # Flow references
+        "objectType", "recordType", "inputReference", "outputReference",
+        # Named credential / connected app
+        "namedCredential", "connectedApp",
+        # Sharing rules
+        "sharedTo", "sharedFrom",
     })
 
     # Tags that are references only inside specific parent contexts
@@ -132,6 +138,9 @@ class SalesforceXmlExtractor(LanguageExtractor):
             "fieldPermissions", "layoutItems", "columns",
             "WorkflowFieldUpdate", "sortField", "searchResultsAdditionalFields",
             "displayedFields", "filterItems",
+            # Flow field references
+            "inputAssignments", "outputAssignments", "filters",
+            "conditions",
         }),
         "object": frozenset({
             "fieldPermissions", "objectPermissions", "listViews",
@@ -142,6 +151,19 @@ class SalesforceXmlExtractor(LanguageExtractor):
         }),
         "name": frozenset({
             "actionOverrides",
+        }),
+        # Permission set / profile: page access, custom permissions, custom settings, tabs
+        "apexPage": frozenset({
+            "pageAccesses",
+        }),
+        "tab": frozenset({
+            "tabVisibilities", "tabSettings",
+        }),
+        "customPermission": frozenset({
+            "customPermissions",
+        }),
+        "customSetting": frozenset({
+            "customSettingAccesses",
         }),
     }
 

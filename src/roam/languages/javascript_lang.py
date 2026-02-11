@@ -596,6 +596,9 @@ class JavaScriptExtractor(LanguageExtractor):
             ref = path[len("@salesforce/label/"):]
             # Strip "c." namespace prefix: "c.MyLabel" -> "MyLabel"
             return ref[2:] if ref.startswith("c.") else ref
+        if path.startswith("@salesforce/messageChannel/"):
+            # "@salesforce/messageChannel/MyChannel__c" -> "MyChannel__c"
+            return path[len("@salesforce/messageChannel/"):]
         return None
 
     def _extract_call(self, node, source, refs, scope_name):

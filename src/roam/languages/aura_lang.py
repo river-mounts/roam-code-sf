@@ -248,6 +248,16 @@ class AuraExtractor(LanguageExtractor):
                         line=node.start_point[0] + 1,
                     ))
 
+            # force:recordData — Lightning Data Service reference
+            elif tag == "force:recordData":
+                sobject = attrs.get("sobjecttype") or attrs.get("objectapiname")
+                if sobject:
+                    refs.append(self._make_reference(
+                        target_name=sobject,
+                        kind="reference",
+                        line=node.start_point[0] + 1,
+                    ))
+
             # Custom component usage: <c:MyChild> or <ns:MyChild>
             elif tag and ":" in tag:
                 ns, comp = tag.split(":", 1)
@@ -259,8 +269,29 @@ class AuraExtractor(LanguageExtractor):
                         line=node.start_point[0] + 1,
                     ))
 
+            # Scan attribute values for $Label.c.X references
+            if attrs:
+                self._extract_label_refs(attrs, node.start_point[0] + 1, refs)
+
         for child in node.children:
             self._walk_refs(child, source, refs, file_path)
+
+    @staticmethod
+    def _extract_label_refs(attrs, line, refs):
+        """Extract $Label.c.LabelName references from Aura attribute values."""
+        import re
+        pattern = re.compile(r'\$Label\.c\.(\w+)')
+        for val in attrs.values():
+            if "$Label" not in val:
+                continue
+            for m in pattern.finditer(val):
+                refs.append({
+                    "source_name": None,
+                    "target_name": m.group(1),
+                    "kind": "reference",
+                    "line": line,
+                    "import_path": None,
+                })
 
     # ------------------------------------------------------------------ #
     #  Helpers                                                            #

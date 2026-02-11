@@ -19,9 +19,19 @@ References extracted:
   - extensions="ExtA,ExtB" → Apex class references
   - <apex:include pageName="X"/> → page reference
   - <c:CustomComponent/> → custom component reference
+  - {!$Label.LabelName} → custom label reference
+  - {!$Setup.CustomSetting__c.FieldName} → custom setting reference
+  - {!controller.property} → controller property reference
 """
 
+import re
+
 from .base import LanguageExtractor
+
+# Regex patterns for VF merge field expressions
+_VF_LABEL_RE = re.compile(r'\{\!\s*\$Label\.(\w+)')
+_VF_SETUP_RE = re.compile(r'\{\!\s*\$Setup\.(\w+)')
+_VF_FIELD_RE = re.compile(r'\{\!\s*(\w+)\.(\w+)')  # {!object.field}
 
 
 class VisualforceExtractor(LanguageExtractor):
@@ -129,8 +139,34 @@ class VisualforceExtractor(LanguageExtractor):
                         line=node.start_point[0] + 1,
                     ))
 
+        # Scan attribute values for merge field expressions
+        if node.type == "element":
+            self._extract_merge_fields(node, source, refs)
+
         for child in node.children:
             self._walk_refs(child, source, refs, file_path)
+
+    def _extract_merge_fields(self, node, source, refs):
+        """Extract references from VF merge field expressions in attribute values."""
+        attrs = self._get_attrs(node, source)
+        for val in attrs.values():
+            if "{!" not in val:
+                continue
+            line = node.start_point[0] + 1
+            # {!$Label.MyLabel}
+            for m in _VF_LABEL_RE.finditer(val):
+                refs.append(self._make_reference(
+                    target_name=m.group(1),
+                    kind="reference",
+                    line=line,
+                ))
+            # {!$Setup.CustomSetting__c.Field}
+            for m in _VF_SETUP_RE.finditer(val):
+                refs.append(self._make_reference(
+                    target_name=m.group(1),
+                    kind="reference",
+                    line=line,
+                ))
 
     # ------------------------------------------------------------------ #
     #  Helpers                                                            #
