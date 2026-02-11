@@ -93,11 +93,12 @@ class ApexExtractor(LanguageExtractor):
         for child in node.children:
             if child.type == "modifiers":
                 text = self.node_text(child, source)
+                # Check more specific keywords first (they do NOT contain "with sharing" as substring)
+                if "without sharing" in text:
+                    return "without sharing"
+                if "inherited sharing" in text:
+                    return "inherited sharing"
                 if "with sharing" in text:
-                    if "without sharing" in text:
-                        return "without sharing"
-                    if "inherited sharing" in text:
-                        return "inherited sharing"
                     return "with sharing"
         return None
 
