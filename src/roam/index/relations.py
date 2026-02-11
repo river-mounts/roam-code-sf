@@ -137,10 +137,43 @@ def resolve_references(
     return edges
 
 
+def _resolve_salesforce_import(import_path: str, candidates: list[dict]) -> list[dict]:
+    """Resolve @salesforce/* import paths to Apex/metadata symbols.
+
+    - @salesforce/apex/AccountHandler.getAccounts → file ending in AccountHandler.cls
+    - @salesforce/schema/Account.Name → symbol whose qualified_name matches
+    - @salesforce/label/c.MyLabel → symbol named MyLabel (from CustomLabel metadata)
+    """
+    if not import_path.startswith("@salesforce/"):
+        return []
+    if import_path.startswith("@salesforce/apex/"):
+        apex_ref = import_path[len("@salesforce/apex/"):]
+        class_name = apex_ref.split(".")[0]
+        return [c for c in candidates
+                if c.get("file_path", "").endswith(f"/{class_name}.cls")
+                or c.get("file_path", "").endswith(f"/{class_name}.trigger")]
+    if import_path.startswith("@salesforce/schema/"):
+        schema_ref = import_path[len("@salesforce/schema/"):]
+        # Match by qualified_name or simple name (last segment)
+        simple = schema_ref.split(".")[-1] if "." in schema_ref else schema_ref
+        return [c for c in candidates
+                if c.get("qualified_name", "") == schema_ref
+                or c.get("name", "") == simple]
+    if import_path.startswith("@salesforce/label/"):
+        label_ref = import_path[len("@salesforce/label/"):]
+        if label_ref.startswith("c."):
+            label_ref = label_ref[2:]
+        return [c for c in candidates if c.get("name", "") == label_ref]
+    return []
+
+
 def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
     """Filter candidates whose file_path matches an import path string.
 
     Handles:
+    - @salesforce/apex/Class.method → Apex class files
+    - @salesforce/schema/Object.Field → SF metadata symbols
+    - @salesforce/label/c.Name → CustomLabel symbols
     - @/ alias → src/ (Vue convention)
     - ./ and ../ relative prefixes (stripped for suffix matching)
     - Barrel exports: import from '@/composables/kiniseis' matches
@@ -149,6 +182,11 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
     """
     if not import_path:
         return []
+
+    # --- Salesforce @salesforce/* imports ---
+    sf_matches = _resolve_salesforce_import(import_path, candidates)
+    if sf_matches:
+        return sf_matches
 
     # Normalize import path: strip prefix, normalize separators
     normalized = import_path.replace("\\", "/")

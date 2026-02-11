@@ -66,6 +66,19 @@ EXTENSION_MAP = {
     # Salesforce Apex
     ".cls": "apex",
     ".trigger": "apex",
+    # Salesforce Aura components (XML-based)
+    ".cmp": "aura",
+    ".app": "aura",
+    ".evt": "aura",
+    ".intf": "aura",
+    ".design": "aura",
+    # Salesforce Visualforce (XML-based)
+    ".page": "visualforce",
+    ".component": "visualforce",
+    # Salesforce extensionless metadata (older format)
+    ".labels": "sfxml",
+    ".workflow": "sfxml",
+    ".object": "sfxml",
     # XML (used as base grammar for Salesforce metadata)
     ".xml": "xml",
 }
@@ -77,14 +90,33 @@ parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
 def detect_language(file_path: str) -> str | None:
     """Detect the tree-sitter language name from a file path.
 
-    Handles Salesforce -meta.xml sidecar files as a special case,
-    routing them through the XML grammar with the 'sfxml' extractor.
+    Handles Salesforce files specially:
+    - *-meta.xml sidecar files → sfxml extractor
+    - .xml files inside Salesforce project paths → sfxml extractor
+    - Extensionless SF metadata (.labels, .workflow, .object) → sfxml extractor
     """
+    lower = file_path.lower()
     # Salesforce metadata sidecar files: *.xxx-meta.xml
-    if file_path.lower().endswith("-meta.xml"):
+    if lower.endswith("-meta.xml"):
         return "sfxml"
     _, ext = os.path.splitext(file_path)
-    return EXTENSION_MAP.get(ext)
+    lang = EXTENSION_MAP.get(ext)
+    # Plain .xml files inside a Salesforce project → treat as sfxml
+    if lang == "xml" and _is_salesforce_path(file_path):
+        return "sfxml"
+    return lang
+
+
+# Salesforce-specific extensions that don't follow normal conventions
+# (older metadata format uses compound extensions without -meta.xml)
+_SF_EXTENSIONLESS_EXTS = {".labels", ".workflow", ".object"}
+
+
+def _is_salesforce_path(path: str) -> bool:
+    """Heuristic: is this file inside a Salesforce project directory?"""
+    parts = path.lower().replace("\\", "/").split("/")
+    sf_dirs = {"force-app", "unpackaged", "mdapi", "metadata", "src"}
+    return bool(sf_dirs & set(parts))
 
 
 def read_source(path: Path) -> bytes | None:
@@ -183,9 +215,9 @@ def parse_file(path: Path, language: str | None = None):
     if language in ("vue", "svelte"):
         source, language = _preprocess_vue(source)
 
-    # Salesforce XML metadata: use the xml grammar for parsing
+    # Salesforce languages: use the xml grammar for parsing
     grammar_language = language
-    if language == "sfxml":
+    if language in ("sfxml", "aura", "visualforce"):
         grammar_language = "xml"
 
     try:

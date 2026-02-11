@@ -691,3 +691,731 @@ class TestSalesforceE2E:
                        cwd=str(salesforce_project))
         # Should not error (may or may not show deps depending on resolution)
         assert rc == 0
+
+
+# ============================================================================
+# Phase 1: LWC → Apex import wiring tests
+# ============================================================================
+
+
+class TestLwcSalesforceImports:
+    """Test that @salesforce/* imports produce correct references."""
+
+    def test_salesforce_apex_import(self):
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = b"import getAccounts from '@salesforce/apex/AccountHandler.getAccounts';\n"
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "accountList.js")
+
+        import_refs = [r for r in refs if r["kind"] == "import"]
+        assert len(import_refs) >= 1
+        # The target should be the Apex qualified name, not the JS local binding
+        assert any(r["target_name"] == "AccountHandler.getAccounts" for r in import_refs)
+
+    def test_salesforce_schema_import(self):
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = b"import ACCOUNT_NAME from '@salesforce/schema/Account.Name';\n"
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "test.js")
+
+        import_refs = [r for r in refs if r["kind"] == "import"]
+        assert any(r["target_name"] == "Account.Name" for r in import_refs)
+
+    def test_salesforce_label_import(self):
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = b"import greeting from '@salesforce/label/c.Greeting';\n"
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "test.js")
+
+        import_refs = [r for r in refs if r["kind"] == "import"]
+        assert any(r["target_name"] == "Greeting" for r in import_refs)
+
+    def test_non_salesforce_import_unchanged(self):
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = b"import { LightningElement } from 'lwc';\n"
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "test.js")
+
+        import_refs = [r for r in refs if r["kind"] == "import"]
+        assert any(r["target_name"] == "LightningElement" for r in import_refs)
+
+
+class TestSalesforceImportResolution:
+    """Test that _resolve_salesforce_import works in relations.py."""
+
+    def test_apex_import_resolution(self):
+        from roam.index.relations import _resolve_salesforce_import
+
+        candidates = [
+            {"file_path": "force-app/main/default/classes/AccountHandler.cls", "name": "AccountHandler"},
+            {"file_path": "force-app/main/default/classes/OtherClass.cls", "name": "OtherClass"},
+        ]
+        matches = _resolve_salesforce_import("@salesforce/apex/AccountHandler.getAccounts", candidates)
+        assert len(matches) == 1
+        assert matches[0]["name"] == "AccountHandler"
+
+    def test_schema_import_resolution(self):
+        from roam.index.relations import _resolve_salesforce_import
+
+        candidates = [
+            {"qualified_name": "Account.Industry__c", "name": "Industry__c"},
+            {"qualified_name": "Contact.Email__c", "name": "Email__c"},
+        ]
+        matches = _resolve_salesforce_import("@salesforce/schema/Account.Industry__c", candidates)
+        assert len(matches) == 1
+        assert matches[0]["name"] == "Industry__c"
+
+    def test_label_import_resolution(self):
+        from roam.index.relations import _resolve_salesforce_import
+
+        candidates = [
+            {"name": "Greeting", "kind": "constant"},
+            {"name": "Farewell", "kind": "constant"},
+        ]
+        matches = _resolve_salesforce_import("@salesforce/label/c.Greeting", candidates)
+        assert len(matches) == 1
+        assert matches[0]["name"] == "Greeting"
+
+    def test_non_salesforce_returns_empty(self):
+        from roam.index.relations import _resolve_salesforce_import
+
+        matches = _resolve_salesforce_import("./utils/helper", [{"name": "helper"}])
+        assert matches == []
+
+
+# ============================================================================
+# Phase 2: Expanded XML reference extraction tests
+# ============================================================================
+
+
+class TestSfXmlExpandedRefs:
+    """Test expanded XML metadata reference extraction."""
+
+    def test_formula_field_references(self, sfxml_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <validationRules>
+        <fullName>Check_Revenue</fullName>
+        <active>true</active>
+        <errorConditionFormula>Account.Revenue__c &lt; 0</errorConditionFormula>
+    </validationRules>
+</CustomObject>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "objects/Account/Account.object-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "Revenue__c" in ref_targets
+
+    def test_context_aware_field_permission_refs(self, sfxml_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Profile xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fieldPermissions>
+        <field>Account.Industry__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+</Profile>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "profiles/Admin.profile-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "Industry__c" in ref_targets
+
+    def test_context_aware_class_access_refs(self, sfxml_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Profile xmlns="http://soap.sforce.com/2006/04/metadata">
+    <classAccesses>
+        <apexClass>AccountHandler</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+</Profile>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "profiles/Admin.profile-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "AccountHandler" in ref_targets
+
+    def test_flow_action_references(self, sfxml_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionCalls>
+        <actionName>AccountHandler</actionName>
+        <actionType>apex</actionType>
+    </actionCalls>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "flows/Account_Flow.flow-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "AccountHandler" in ref_targets
+
+    def test_reference_to_sobject(self, sfxml_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fields>
+        <fullName>ParentAccount__c</fullName>
+        <type>Lookup</type>
+        <referenceTo>Account</referenceTo>
+        <relationshipName>ChildAccounts</relationshipName>
+    </fields>
+</CustomObject>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "objects/Child__c/Child__c.object-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "Account" in ref_targets
+        assert "ChildAccounts" in ref_targets
+
+
+# ============================================================================
+# Phase 3: Aura component extraction tests
+# ============================================================================
+
+
+@pytest.fixture
+def aura_extractor():
+    from roam.languages.aura_lang import AuraExtractor
+    return AuraExtractor()
+
+
+class TestAuraComponentExtraction:
+    """Test Aura Lightning component extraction."""
+
+    def test_basic_component(self, aura_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<aura:component controller="AccountController" implements="force:appHostable">
+    <aura:attribute name="accounts" type="List" description="List of accounts"/>
+    <aura:attribute name="searchKey" type="String" default=""/>
+    <aura:handler name="init" value="{!this}" action="{!c.doInit}"/>
+    <aura:method name="refresh" description="Refreshes the data"/>
+</aura:component>
+""")
+        symbols = aura_extractor.extract_symbols(tree, source, "AccountList.cmp")
+        names = [s["name"] for s in symbols]
+
+        assert "AccountList" in names
+        assert "accounts" in names
+        assert "searchKey" in names
+        assert "init" in names
+        assert "refresh" in names
+
+        comp = next(s for s in symbols if s["name"] == "AccountList")
+        assert comp["kind"] == "class"
+
+        attr = next(s for s in symbols if s["name"] == "accounts")
+        assert attr["kind"] == "field"
+        assert "List" in attr["signature"]
+        assert attr["docstring"] == "List of accounts"
+
+        method = next(s for s in symbols if s["name"] == "refresh")
+        assert method["kind"] == "method"
+
+    def test_component_references(self, aura_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<aura:component controller="AccountController" extends="c:BaseComponent" implements="force:appHostable,flexipage:availableForAllPageTypes">
+    <aura:handler event="c:AccountUpdated" action="{!c.handleUpdate}"/>
+    <aura:registerEvent name="notify" type="c:NotifyEvent"/>
+    <c:ChildComponent aura:id="child"/>
+</aura:component>
+""")
+        refs = aura_extractor.extract_references(tree, source, "AccountList.cmp")
+        targets = {r["target_name"] for r in refs}
+
+        assert "AccountController" in targets  # controller
+        assert "BaseComponent" in targets       # extends
+        assert "AccountUpdated" in targets      # event handler
+        assert "NotifyEvent" in targets         # registered event
+        assert "ChildComponent" in targets      # child component usage
+
+        # Check implements references
+        impl_refs = [r for r in refs if r["kind"] == "implements"]
+        impl_targets = {r["target_name"] for r in impl_refs}
+        assert "force:appHostable" in impl_targets
+
+    def test_aura_application(self, aura_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<aura:application extends="force:slds">
+    <c:AccountList/>
+</aura:application>
+""")
+        symbols = aura_extractor.extract_symbols(tree, source, "MyApp.app")
+        assert any(s["name"] == "MyApp" and s["kind"] == "class" for s in symbols)
+
+    def test_aura_event(self, aura_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<aura:event type="COMPONENT">
+    <aura:attribute name="accountId" type="String"/>
+</aura:event>
+""")
+        symbols = aura_extractor.extract_symbols(tree, source, "AccountUpdated.evt")
+        assert any(s["name"] == "AccountUpdated" and s["kind"] == "class" for s in symbols)
+        assert any(s["name"] == "accountId" and s["kind"] == "field" for s in symbols)
+
+    def test_aura_interface(self, aura_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<aura:interface>
+    <aura:attribute name="title" type="String" required="true"/>
+</aura:interface>
+""")
+        symbols = aura_extractor.extract_symbols(tree, source, "Displayable.intf")
+        iface = next(s for s in symbols if s["name"] == "Displayable")
+        assert iface["kind"] == "interface"
+
+
+# ============================================================================
+# Phase 3: Visualforce extraction tests
+# ============================================================================
+
+
+@pytest.fixture
+def vf_extractor():
+    from roam.languages.visualforce_lang import VisualforceExtractor
+    return VisualforceExtractor()
+
+
+class TestVisualforceExtraction:
+    """Test Visualforce page and component extraction."""
+
+    def test_vf_page_with_controller(self, vf_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<apex:page controller="AccountController" extensions="ExtensionA,ExtensionB">
+    <apex:form>
+        <apex:inputField value="{!account.Name}"/>
+    </apex:form>
+</apex:page>
+""")
+        symbols = vf_extractor.extract_symbols(tree, source, "AccountPage.page")
+        page = next(s for s in symbols if s["name"] == "AccountPage")
+        assert page["kind"] == "class"
+        assert "controller=AccountController" in page["signature"]
+
+        refs = vf_extractor.extract_references(tree, source, "AccountPage.page")
+        targets = {r["target_name"] for r in refs}
+        assert "AccountController" in targets
+        assert "ExtensionA" in targets
+        assert "ExtensionB" in targets
+
+    def test_vf_component_refs(self, vf_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<apex:page>
+    <apex:include pageName="SharedHeader"/>
+    <c:CustomWidget title="Test"/>
+</apex:page>
+""")
+        refs = vf_extractor.extract_references(tree, source, "TestPage.page")
+        targets = {r["target_name"] for r in refs}
+        assert "SharedHeader" in targets
+        assert "CustomWidget" in targets
+
+    def test_vf_component(self, vf_extractor, xml_parser):
+        tree, source = _parse_xml(xml_parser, """<apex:component controller="WidgetController">
+    <apex:attribute name="title" type="String" description="Widget title"/>
+</apex:component>
+""")
+        symbols = vf_extractor.extract_symbols(tree, source, "CustomWidget.component")
+        assert any(s["name"] == "CustomWidget" for s in symbols)
+
+        refs = vf_extractor.extract_references(tree, source, "CustomWidget.component")
+        targets = {r["target_name"] for r in refs}
+        assert "WidgetController" in targets
+
+
+# ============================================================================
+# Phase 4: Language detection and path heuristic tests
+# ============================================================================
+
+
+class TestSalesforcePathDetection:
+    """Test Salesforce path heuristics and extensionless metadata."""
+
+    def test_aura_extension_detection(self):
+        from roam.languages.registry import get_language_for_file
+        assert get_language_for_file("MyComponent.cmp") == "aura"
+        assert get_language_for_file("MyApp.app") == "aura"
+        assert get_language_for_file("MyEvent.evt") == "aura"
+        assert get_language_for_file("MyInterface.intf") == "aura"
+        assert get_language_for_file("MyDesign.design") == "aura"
+
+    def test_visualforce_extension_detection(self):
+        from roam.languages.registry import get_language_for_file
+        assert get_language_for_file("AccountPage.page") == "visualforce"
+        assert get_language_for_file("CustomWidget.component") == "visualforce"
+
+    def test_extensionless_sf_metadata(self):
+        from roam.languages.registry import get_language_for_file
+        assert get_language_for_file("CustomLabels.labels") == "sfxml"
+        assert get_language_for_file("Account.workflow") == "sfxml"
+        assert get_language_for_file("Account.object") == "sfxml"
+
+    def test_xml_in_force_app_detected_as_sfxml(self):
+        from roam.index.parser import detect_language
+        assert detect_language("force-app/main/default/package.xml") == "sfxml"
+
+    def test_xml_outside_sf_stays_xml(self):
+        from roam.index.parser import detect_language
+        assert detect_language("config/settings.xml") == "xml"
+
+    def test_parser_aura_detection(self):
+        from roam.index.parser import detect_language
+        assert detect_language("aura/MyComponent/MyComponent.cmp") == "aura"
+
+    def test_parser_vf_detection(self):
+        from roam.index.parser import detect_language
+        assert detect_language("pages/AccountPage.page") == "visualforce"
+
+    def test_extractor_factory_aura(self):
+        from roam.languages.registry import get_extractor
+        from roam.languages.aura_lang import AuraExtractor
+        assert isinstance(get_extractor("aura"), AuraExtractor)
+
+    def test_extractor_factory_visualforce(self):
+        from roam.languages.registry import get_extractor
+        from roam.languages.visualforce_lang import VisualforceExtractor
+        assert isinstance(get_extractor("visualforce"), VisualforceExtractor)
+
+
+# ============================================================================
+# Extended E2E: Full Salesforce project with Aura + Visualforce
+# ============================================================================
+
+
+@pytest.fixture(scope="module")
+def full_sf_project(tmp_path_factory):
+    """Create a full SF DX project with Apex + LWC + Aura + Visualforce."""
+    proj = tmp_path_factory.mktemp("full_sf_project")
+
+    # Apex class
+    classes_dir = proj / "force-app" / "main" / "default" / "classes"
+    classes_dir.mkdir(parents=True)
+    (classes_dir / "AccountController.cls").write_text(
+        'public with sharing class AccountController {\n'
+        '    @AuraEnabled\n'
+        '    public static List<Account> getAccounts() {\n'
+        '        return [SELECT Id, Name FROM Account];\n'
+        '    }\n'
+        '}\n'
+    )
+    (classes_dir / "AccountController.cls-meta.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+        '    <apiVersion>58.0</apiVersion>\n'
+        '    <status>Active</status>\n'
+        '</ApexClass>\n'
+    )
+
+    # LWC that imports from Apex
+    lwc_dir = proj / "force-app" / "main" / "default" / "lwc" / "accountList"
+    lwc_dir.mkdir(parents=True)
+    (lwc_dir / "accountList.js").write_text(
+        "import { LightningElement, wire } from 'lwc';\n"
+        "import getAccounts from '@salesforce/apex/AccountController.getAccounts';\n"
+        "import ACCOUNT_NAME from '@salesforce/schema/Account.Name';\n"
+        "\n"
+        "export default class AccountList extends LightningElement {\n"
+        "    accounts;\n"
+        "    @wire(getAccounts)\n"
+        "    wiredAccounts({ data }) {\n"
+        "        if (data) this.accounts = data;\n"
+        "    }\n"
+        "}\n"
+    )
+    (lwc_dir / "accountList.js-meta.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+        '    <apiVersion>58.0</apiVersion>\n'
+        '    <isExposed>true</isExposed>\n'
+        '</LightningComponentBundle>\n'
+    )
+
+    # Aura component
+    aura_dir = proj / "force-app" / "main" / "default" / "aura" / "AccountCard"
+    aura_dir.mkdir(parents=True)
+    (aura_dir / "AccountCard.cmp").write_text(
+        '<aura:component controller="AccountController" implements="force:appHostable">\n'
+        '    <aura:attribute name="accountId" type="String"/>\n'
+        '    <aura:handler name="init" value="{!this}" action="{!c.doInit}"/>\n'
+        '    <c:accountList/>\n'
+        '</aura:component>\n'
+    )
+
+    # Visualforce page
+    pages_dir = proj / "force-app" / "main" / "default" / "pages"
+    pages_dir.mkdir(parents=True)
+    (pages_dir / "AccountPage.page").write_text(
+        '<apex:page controller="AccountController">\n'
+        '    <apex:form>\n'
+        '        <apex:pageBlock title="Accounts">\n'
+        '        </apex:pageBlock>\n'
+        '    </apex:form>\n'
+        '</apex:page>\n'
+    )
+    (pages_dir / "AccountPage.page-meta.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<ApexPage xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+        '    <apiVersion>58.0</apiVersion>\n'
+        '</ApexPage>\n'
+    )
+
+    # Custom labels
+    labels_dir = proj / "force-app" / "main" / "default" / "labels"
+    labels_dir.mkdir(parents=True)
+    (labels_dir / "CustomLabels.labels-meta.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<CustomLabels xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+        '    <labels>\n'
+        '        <fullName>Greeting</fullName>\n'
+        '        <language>en_US</language>\n'
+        '        <value>Hello</value>\n'
+        '    </labels>\n'
+        '</CustomLabels>\n'
+    )
+
+    git_init(proj)
+    out, rc = roam("index", cwd=str(proj))
+    assert rc == 0, f"Index failed: {out}"
+    return proj
+
+
+class TestFullSalesforceE2E:
+    """E2E tests for a full Salesforce project with all file types."""
+
+    def test_index_succeeds(self, full_sf_project):
+        out, rc = roam("index", cwd=str(full_sf_project))
+        assert rc == 0
+
+    def test_map_shows_all_languages(self, full_sf_project):
+        out, rc = roam("map", cwd=str(full_sf_project))
+        assert rc == 0
+        assert "apex" in out
+        assert "javascript" in out
+        assert "aura" in out
+
+    def test_apex_class_symbol(self, full_sf_project):
+        out, rc = roam("symbol", "AccountController", cwd=str(full_sf_project))
+        assert rc == 0
+        assert "AccountController" in out
+
+    def test_aura_component_symbol(self, full_sf_project):
+        out, rc = roam("symbol", "AccountCard", cwd=str(full_sf_project))
+        assert rc == 0
+        assert "AccountCard" in out
+
+    def test_visualforce_page_symbol(self, full_sf_project):
+        out, rc = roam("symbol", "AccountPage", cwd=str(full_sf_project))
+        assert rc == 0
+        assert "AccountPage" in out
+
+    def test_aura_references_apex_controller(self, full_sf_project):
+        """Aura component referencing controller should create a dep edge."""
+        out, rc = roam("deps",
+                       "force-app/main/default/aura/AccountCard/AccountCard.cmp",
+                       cwd=str(full_sf_project))
+        assert rc == 0
+        # The Aura component references AccountController — should appear as a dep
+        assert "AccountController" in out
+
+
+# ============================================================================
+# Edge-case and negative tests
+# ============================================================================
+
+
+class TestApexEdgeCases:
+    """Test Apex extractor handles edge cases gracefully."""
+
+    def test_empty_class(self, apex_extractor, apex_parser):
+        """An empty class should still produce a class symbol."""
+        tree, source = _parse_apex(apex_parser, "public class Empty {}")
+        symbols = apex_extractor.extract_symbols(tree, source, "Empty.cls")
+        assert any(s["name"] == "Empty" and s["kind"] == "class" for s in symbols)
+        # No methods or fields
+        assert all(s["kind"] == "class" for s in symbols)
+
+    def test_global_visibility(self, apex_extractor, apex_parser):
+        """global keyword should map to public visibility."""
+        tree, source = _parse_apex(apex_parser, """
+global class ApiEndpoint {
+    global static void doPost() {}
+}
+""")
+        symbols = apex_extractor.extract_symbols(tree, source, "ApiEndpoint.cls")
+        cls = next(s for s in symbols if s["name"] == "ApiEndpoint")
+        assert cls["visibility"] == "public"
+        assert cls["is_exported"] is True
+
+    def test_without_sharing(self, apex_extractor, apex_parser):
+        tree, source = _parse_apex(apex_parser, """
+public without sharing class Insecure {
+    public void doWork() {}
+}
+""")
+        symbols = apex_extractor.extract_symbols(tree, source, "Insecure.cls")
+        cls = next(s for s in symbols if s["name"] == "Insecure")
+        assert "without sharing" in cls["signature"]
+
+    def test_multiple_methods_distinct(self, apex_extractor, apex_parser):
+        """All method names should appear with correct parent_name."""
+        tree, source = _parse_apex(apex_parser, """
+public class Multi {
+    public void a() {}
+    private String b() { return ''; }
+    public static Integer c(Integer x) { return x; }
+}
+""")
+        symbols = apex_extractor.extract_symbols(tree, source, "Multi.cls")
+        methods = [s for s in symbols if s["kind"] == "method"]
+        assert len(methods) == 3
+        assert {m["name"] for m in methods} == {"a", "b", "c"}
+        for m in methods:
+            assert m["parent_name"] == "Multi"
+
+    def test_trigger_no_body(self, apex_extractor, apex_parser):
+        """A trigger with an empty body should still produce a trigger symbol."""
+        tree, source = _parse_apex(apex_parser, """
+trigger EmptyTrigger on Contact (before insert) {
+}
+""")
+        symbols = apex_extractor.extract_symbols(tree, source, "EmptyTrigger.trigger")
+        assert any(s["name"] == "EmptyTrigger" and s["kind"] == "trigger" for s in symbols)
+
+
+class TestSfXmlEdgeCases:
+    """Test XML extractor handles edge cases."""
+
+    def test_empty_custom_object(self, sfxml_extractor, xml_parser):
+        """A CustomObject with no fields should still produce a root symbol."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+</CustomObject>
+""")
+        symbols = sfxml_extractor.extract_symbols(
+            tree, source, "objects/Bare__c/Bare__c.object-meta.xml"
+        )
+        assert any(s["name"] == "Bare__c" and s["kind"] == "class" for s in symbols)
+
+    def test_formula_with_multiple_refs(self, sfxml_extractor, xml_parser):
+        """Formula with multiple Object.Field__c patterns extracts all."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <validationRules>
+        <fullName>Budget_Check</fullName>
+        <active>true</active>
+        <errorConditionFormula>Account.Revenue__c &gt; Contact.Budget__c</errorConditionFormula>
+    </validationRules>
+</CustomObject>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "objects/Opportunity/Opportunity.object-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "Revenue__c" in ref_targets
+        assert "Budget__c" in ref_targets
+
+    def test_non_ref_field_not_extracted(self, sfxml_extractor, xml_parser):
+        """<field> outside a known parent context is not treated as a reference."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fields>
+        <fullName>SomeField__c</fullName>
+        <type>Text</type>
+        <field>this_is_not_a_ref</field>
+    </fields>
+</CustomObject>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "objects/Account/Account.object-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        # <field> inside <fields> is not in _CONTEXT_REF_PARENTS for "fields"
+        assert "this_is_not_a_ref" not in ref_targets
+
+
+class TestAuraEdgeCases:
+    """Test Aura extractor handles edge cases."""
+
+    def test_component_with_no_attributes(self, xml_parser):
+        """An Aura component with just the root tag and no attributes/members."""
+        from roam.languages.aura_lang import AuraExtractor
+        ext = AuraExtractor()
+        tree, source = _parse_xml(xml_parser, """<aura:component>
+</aura:component>
+""")
+        symbols = ext.extract_symbols(tree, source, "Minimal.cmp")
+        assert len(symbols) == 1
+        assert symbols[0]["name"] == "Minimal"
+        assert symbols[0]["kind"] == "class"
+
+    def test_lowercase_custom_component_ignored(self, xml_parser):
+        """<c:lowerCase> should not produce a reference (only PascalCase)."""
+        from roam.languages.aura_lang import AuraExtractor
+        ext = AuraExtractor()
+        tree, source = _parse_xml(xml_parser, """<aura:component>
+    <c:lowerCase attr="val"/>
+</aura:component>
+""")
+        refs = ext.extract_references(tree, source, "Test.cmp")
+        comp_refs = [r for r in refs if r["target_name"] == "lowerCase"]
+        assert len(comp_refs) == 0
+
+
+class TestVisualforceEdgeCases:
+    """Test Visualforce extractor edge cases."""
+
+    def test_vf_page_controller_in_signature(self, vf_extractor, xml_parser):
+        """Controller and extensions should appear in the page signature."""
+        tree, source = _parse_xml(xml_parser, """<apex:page controller="MyCtrl" extensions="ExtA">
+</apex:page>
+""")
+        symbols = vf_extractor.extract_symbols(tree, source, "MyPage.page")
+        page = next(s for s in symbols if s["name"] == "MyPage")
+        assert "controller=MyCtrl" in page["signature"]
+        assert "extensions=ExtA" in page["signature"]
+
+    def test_vf_page_no_controller(self, vf_extractor, xml_parser):
+        """A VF page with no controller still produces a symbol."""
+        tree, source = _parse_xml(xml_parser, """<apex:page>
+    <h1>Hello</h1>
+</apex:page>
+""")
+        symbols = vf_extractor.extract_symbols(tree, source, "SimplePage.page")
+        assert any(s["name"] == "SimplePage" for s in symbols)
+        refs = vf_extractor.extract_references(tree, source, "SimplePage.page")
+        # No controller means no controller reference
+        assert len([r for r in refs if r["target_name"] == "SimplePage"]) == 0
+
+
+class TestPathHeuristicEdgeCases:
+    """Additional path detection edge cases."""
+
+    def test_src_dir_xml_is_sfxml(self):
+        """src/ is in the SF heuristic dirs, so .xml under it → sfxml."""
+        from roam.index.parser import detect_language
+        assert detect_language("src/objects/Account.xml") == "sfxml"
+
+    def test_non_sf_xml_with_different_parent(self):
+        """Plain .xml outside all SF dirs stays as xml."""
+        from roam.index.parser import detect_language
+        assert detect_language("app/templates/layout.xml") == "xml"
+
+    def test_meta_xml_case_insensitive(self):
+        """Verify -meta.xml detection is case-insensitive on the suffix."""
+        from roam.languages.registry import get_language_for_file
+        assert get_language_for_file("MyClass.cls-META.XML") == "sfxml"
+
+    def test_double_ext_meta_xml(self):
+        """Compound extension like .field-meta.xml still detected as sfxml."""
+        from roam.languages.registry import get_language_for_file
+        assert get_language_for_file("Industry__c.field-meta.xml") == "sfxml"

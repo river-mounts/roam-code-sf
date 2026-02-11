@@ -45,13 +45,26 @@ _EXTENSION_MAP: dict[str, str] = {
     # Salesforce Apex
     ".cls": "apex",
     ".trigger": "apex",
+    # Salesforce Aura components (XML-based)
+    ".cmp": "aura",
+    ".app": "aura",
+    ".evt": "aura",
+    ".intf": "aura",
+    ".design": "aura",
+    # Salesforce Visualforce (XML-based)
+    ".page": "visualforce",
+    ".component": "visualforce",
+    # Salesforce extensionless metadata (older format)
+    ".labels": "sfxml",
+    ".workflow": "sfxml",
+    ".object": "sfxml",
 }
 
 # Languages with dedicated extractors
 _DEDICATED_EXTRACTORS = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp", "php",
-    "apex", "sfxml",
+    "apex", "sfxml", "aura", "visualforce",
 })
 
 # All supported tree-sitter language names
@@ -60,7 +73,7 @@ _SUPPORTED_LANGUAGES = frozenset({
     "go", "rust", "java", "c", "cpp",
     "ruby", "php", "c_sharp", "kotlin", "swift", "scala",
     "vue", "svelte",
-    "apex", "sfxml",
+    "apex", "sfxml", "aura", "visualforce",
 })
 
 
@@ -77,6 +90,13 @@ def get_language_for_file(path: str) -> str | None:
     _, ext = os.path.splitext(path)
     ext = ext.lower()
     return _EXTENSION_MAP.get(ext)
+
+
+def _is_salesforce_path(path: str) -> bool:
+    """Heuristic: is this file inside a Salesforce project directory?"""
+    parts = path.lower().replace("\\", "/").split("/")
+    sf_dirs = {"force-app", "unpackaged", "mdapi", "metadata", "src"}
+    return bool(sf_dirs & set(parts))
 
 
 def get_ts_language(language: str):
@@ -96,8 +116,8 @@ def get_ts_language(language: str):
         raise ValueError(f"Unsupported language: {language}")
 
     from tree_sitter_language_pack import get_language
-    # sfxml uses the xml tree-sitter grammar
-    grammar_name = "xml" if language == "sfxml" else language
+    # Salesforce languages use the xml tree-sitter grammar
+    grammar_name = "xml" if language in ("sfxml", "aura", "visualforce") else language
     return get_language(grammar_name)
 
 
@@ -137,6 +157,12 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "sfxml":
         from .sfxml_lang import SalesforceXmlExtractor
         return SalesforceXmlExtractor()
+    elif language == "aura":
+        from .aura_lang import AuraExtractor
+        return AuraExtractor()
+    elif language == "visualforce":
+        from .visualforce_lang import VisualforceExtractor
+        return VisualforceExtractor()
     else:
         # Use generic extractor for tier-2 languages
         from .generic_lang import GenericExtractor

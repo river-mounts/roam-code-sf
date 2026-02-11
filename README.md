@@ -7,13 +7,12 @@
 ██   ██  ██████  ██   ██ ██      ██
 </pre>
 
-**codebase intelligence for AI**
+**codebase intelligence for AI — Salesforce edition**
 
-v4.3.1 · 29 commands · one pre-built index · instant answers
+Fork of [roam-code](https://github.com/Cranot/roam-code) v4.3.1 with comprehensive Salesforce metadata support: Apex, LWC, Aura, Visualforce, and XML metadata extractors with cross-language edge resolution.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/Cranot/roam-code/actions/workflows/ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/ci.yml)
 
 </div>
 
@@ -21,16 +20,17 @@ v4.3.1 · 29 commands · one pre-built index · instant answers
 
 Your AI agent shouldn't need 10 tool calls to understand a codebase. Roam pre-indexes everything -- symbols, call graphs, dependencies, architecture, git history -- so any question is one shell command away.
 
+This fork adds **comprehensive Salesforce support**: Apex classes/triggers, Lightning Web Components (with `@salesforce/apex/*` cross-language edges), Aura components, Visualforce pages, and all XML metadata formats (`*-meta.xml`, profiles, flows, custom objects).
+
 ```bash
 $ roam index                     # build once (~5s), then incremental
-$ roam symbol Flask              # definition + 47 callers + 3 callees + PageRank
-$ roam context Flask             # AI-ready: files-to-read with exact line ranges
-$ roam deps src/flask/app.py     # imports + imported-by with symbol breakdown
-$ roam impact create_app         # 34 symbols break if this changes
-$ roam split src/flask/app.py    # internal groups with isolation % + extraction suggestions
-$ roam why Flask                 # role, reach, criticality, one-line verdict
-$ roam risk                      # domain-weighted risk ranking of all symbols
+$ roam symbol AccountHandler     # Apex class: methods, callers, callees
+$ roam deps force-app/.../AccountHandler.cls  # what depends on this Apex class
+$ roam impact getAccounts        # blast radius if this @AuraEnabled method changes
+$ roam map                       # project overview with apex, aura, visualforce stats
 $ roam health                    # cycles, god components, bottlenecks + summary
+$ roam context Flask             # AI-ready: files-to-read with exact line ranges
+$ roam risk                      # domain-weighted risk ranking of all symbols
 $ roam pr-risk HEAD~3..HEAD      # 0-100 risk score + dead exports + reviewers
 $ roam diff                      # blast radius of your uncommitted changes
 ```
@@ -57,16 +57,16 @@ $ roam diff                      # blast radius of your uncommitted changes
 
 ```bash
 # Recommended for CLI tools (isolated environment)
-pipx install git+https://github.com/Cranot/roam-code.git
+pipx install git+https://github.com/river-mounts/roam-code-sf.git
 
 # Or with uv (fastest)
-uv tool install git+https://github.com/Cranot/roam-code.git
+uv tool install git+https://github.com/river-mounts/roam-code-sf.git
 
 # Or with pip
-pip install git+https://github.com/Cranot/roam-code.git
+pip install git+https://github.com/river-mounts/roam-code-sf.git
 ```
 
-> **Note:** Roam is not yet published to PyPI. Install from source as shown above, or clone and `pip install -e .` for development.
+> **Note:** This fork is not published to PyPI. Install from source as shown above, or clone and `pip install -e .` for development. For the upstream version without Salesforce support, see [Cranot/roam-code](https://github.com/Cranot/roam-code).
 
 Verify the install:
 
@@ -113,8 +113,8 @@ The index is stored at `.roam/index.db` in your project root. Run `roam --help` 
 <summary><strong>Try it on Roam itself</strong></summary>
 
 ```bash
-git clone https://github.com/Cranot/roam-code.git
-cd roam-code
+git clone https://github.com/river-mounts/roam-code-sf.git
+cd roam-code-sf
 pip install -e .
 roam index --force
 roam map
@@ -440,9 +440,10 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | Language | Extensions | Symbols | References | Inheritance |
 |----------|-----------|---------|------------|-------------|
 | Python | `.py` `.pyi` | classes, functions, methods, decorators, variables | imports, calls, inheritance | extends, `__all__` exports |
-| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | classes, functions, arrow functions, CJS exports (`exports.X`, `module.exports={}`, prototype methods) | imports, require(), calls | extends |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | classes, functions, arrow functions, CJS exports (`exports.X`, `module.exports={}`, prototype methods) | imports, require(), calls, `@salesforce/*` | extends |
 | TypeScript | `.ts` `.tsx` `.mts` `.cts` | interfaces, type aliases, enums + all JS | imports, calls, type refs | extends, implements |
 | Java | `.java` | classes, interfaces, enums, constructors, fields | imports, calls | extends, implements |
+| **Apex** | **`.cls` `.trigger`** | **classes, triggers, interfaces, enums, methods, fields, properties (get/set), inner classes** | **method calls, DML (insert/update/delete), Trigger.\* context refs** | **extends, implements** |
 | Go | `.go` | structs, interfaces, functions, methods, fields | imports, calls | embedded structs |
 | Rust | `.rs` | structs, traits, impls, enums, functions | use, calls | impl Trait for Struct |
 | C | `.c` `.h` | structs, functions, typedefs, enums | includes, calls | -- |
@@ -450,6 +451,29 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | PHP | `.php` | classes, interfaces, traits, enums, methods, properties, constants, constructor promotion | namespace use, calls, static calls, nullsafe calls (`?->`), `new` | extends, implements, use (traits) |
 | Vue | `.vue` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
 | Svelte | `.svelte` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
+| **Aura** | **`.cmp` `.app` `.evt` `.intf` `.design`** | **components, applications, events, interfaces, attributes, methods, handlers, registered events** | **controller refs, event refs, child component usage** | **extends, implements** |
+| **Visualforce** | **`.page` `.component`** | **pages, components** | **controller refs, extension refs, `<apex:include>`, custom component usage** | -- |
+| **SF Metadata XML** | **`*-meta.xml` `.labels` `.workflow` `.object`** | **CustomObject, fields, validation rules, flows, profiles, permission sets, LWC bundles, labels, layouts** | **Apex class refs, field refs (context-aware), formula field refs, SObject cross-refs** | -- |
+
+### Salesforce DX Support
+
+Roam has first-class support for Salesforce DX projects. It understands the full Salesforce development stack:
+
+- **Apex** -- classes, triggers, interfaces, enums with full symbol + reference extraction, including sharing modifiers (`with sharing`), annotations (`@AuraEnabled`, `@IsTest`), DML operations, and ApexDoc
+- **LWC** -- JavaScript controllers (ES module extraction), HTML templates, CSS, and `*-meta.xml` bundles. `@salesforce/apex/*` imports resolve to Apex class methods, `@salesforce/schema/*` to metadata fields, `@salesforce/label/*` to custom labels
+- **Aura** -- Lightning components (`.cmp`), applications (`.app`), events (`.evt`), interfaces (`.intf`), with attribute/method/handler extraction and controller/event/component cross-references
+- **Visualforce** -- pages (`.page`) and components (`.component`) with controller and extension references
+- **Metadata XML** -- all `*-meta.xml` sidecar files, CustomObject field definitions, validation rules with formula parsing, profiles with context-aware field/class permission refs, flows with action references
+- **Cross-language edges** -- LWC JavaScript `→` Apex classes, Aura components `→` Apex controllers, Visualforce pages `→` Apex controllers, metadata XML `→` Apex classes/fields
+
+```bash
+cd my-sfdx-project
+roam index                                    # indexes .cls, .trigger, .cmp, .page, *-meta.xml, .js, ...
+roam map                                      # project overview with apex, aura, visualforce stats
+roam symbol AccountHandler                    # Apex class: methods, callers, callees
+roam deps force-app/.../AccountHandler.cls    # what depends on this Apex class
+roam impact getAccounts                       # blast radius if this @AuraEnabled method changes
+```
 
 ### Tier 2 -- Generic extraction
 
@@ -600,7 +624,7 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 
 - **No runtime analysis** -- can't trace dynamic dispatch, reflection, or eval'd code
 - **Import resolution is heuristic** -- complex re-exports or conditional imports may not resolve correctly
-- **No cross-language edges** -- a Python file calling a C extension won't show as a dependency
+- **Limited cross-language edges** -- Salesforce LWC→Apex and Aura/VF→Apex edges are supported; other cross-language boundaries (e.g., Python calling C extensions) are not
 - **Tier 2 languages** (Ruby, C#, Kotlin, Swift, Scala) get basic symbol extraction only (no import resolution or call tracking)
 - **Large monorepos** (100k+ files) may have slow initial indexing -- incremental updates remain fast
 
@@ -624,7 +648,7 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 # Update to latest
 pipx upgrade roam-code            # if installed with pipx
 uv tool upgrade roam-code         # if installed with uv
-pip install --upgrade git+https://github.com/Cranot/roam-code.git  # if installed with pip
+pip install --upgrade git+https://github.com/river-mounts/roam-code-sf.git  # if installed with pip
 
 # Uninstall
 pipx uninstall roam-code          # if installed with pipx
@@ -638,11 +662,11 @@ To clean up project-local data, delete the `.roam/` directory from your project 
 
 ```bash
 # Clone and install in dev mode
-git clone https://github.com/Cranot/roam-code.git
-cd roam-code
+git clone https://github.com/river-mounts/roam-code-sf.git
+cd roam-code-sf
 pip install -e .
 
-# Run tests (~276 tests across 16 languages, 3 OS, Python 3.10-3.13)
+# Run tests (~390 tests across 20 languages including Salesforce)
 pytest tests/
 
 # Index roam itself
@@ -665,7 +689,7 @@ roam map
 <summary>Click to expand</summary>
 
 ```
-roam-code/
+roam-code-sf/
 ├── pyproject.toml
 ├── src/roam/
 │   ├── cli.py                      # Click CLI entry point (29 commands)
@@ -685,13 +709,17 @@ roam-code/
 │   │   ├── base.py                 # Abstract LanguageExtractor
 │   │   ├── registry.py             # Language detection + factory
 │   │   ├── python_lang.py          # Python extractor
-│   │   ├── javascript_lang.py      # JavaScript extractor
+│   │   ├── javascript_lang.py      # JavaScript extractor (+@salesforce/* imports)
 │   │   ├── typescript_lang.py      # TypeScript/Vue/Svelte extractor
 │   │   ├── java_lang.py            # Java extractor
 │   │   ├── go_lang.py              # Go extractor
 │   │   ├── rust_lang.py            # Rust extractor
 │   │   ├── c_lang.py               # C/C++ extractor
 │   │   ├── php_lang.py             # PHP extractor
+│   │   ├── apex_lang.py            # Salesforce Apex extractor
+│   │   ├── sfxml_lang.py           # Salesforce metadata XML extractor
+│   │   ├── aura_lang.py            # Salesforce Aura/Lightning extractor
+│   │   ├── visualforce_lang.py     # Salesforce Visualforce extractor
 │   │   └── generic_lang.py         # Tier 2 fallback extractor
 │   ├── graph/
 │   │   ├── builder.py              # DB -> NetworkX graph
@@ -711,6 +739,7 @@ roam-code/
     ├── test_basic.py               # Core functionality tests
     ├── test_fixes.py               # Regression tests
     ├── test_comprehensive.py       # Language and command tests
+    ├── test_salesforce.py          # Salesforce Apex/LWC/Aura/VF/metadata tests
     ├── test_performance.py         # Performance, stress, and resilience tests
     └── test_resolve.py             # Symbol resolution + line_start attribution tests
 ```
@@ -722,8 +751,8 @@ roam-code/
 Contributions are welcome! Here's how to get started:
 
 ```bash
-git clone https://github.com/Cranot/roam-code.git
-cd roam-code
+git clone https://github.com/river-mounts/roam-code-sf.git
+cd roam-code-sf
 pip install -e .
 pytest tests/   # All tests must pass before submitting
 ```

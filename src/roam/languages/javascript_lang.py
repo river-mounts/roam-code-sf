@@ -525,7 +525,13 @@ class JavaScriptExtractor(LanguageExtractor):
                 self._walk_refs(child, source, refs, new_scope)
 
     def _extract_esm_import(self, node, source, refs, scope_name):
-        """Extract ESM import statements."""
+        """Extract ESM import statements.
+
+        Handles Salesforce-specific @salesforce/* import paths:
+        - @salesforce/apex/ClassName.methodName  -> target = "ClassName.methodName"
+        - @salesforce/schema/Object.Field        -> target = "Object.Field"
+        - @salesforce/label/c.LabelName          -> target = "LabelName"
+        """
         source_node = node.child_by_field_name("source")
         if source_node is None:
             return
@@ -549,10 +555,14 @@ class JavaScriptExtractor(LanguageExtractor):
                             if ns_child.type == "identifier":
                                 names.append(self.node_text(ns_child, source))
 
+        # Resolve Salesforce @salesforce/* imports to meaningful target names
+        sf_target = self._resolve_salesforce_import_target(path)
+
         if names:
             for name in names:
+                target = sf_target if sf_target else name
                 refs.append(self._make_reference(
-                    target_name=name,
+                    target_name=target,
                     kind="import",
                     line=node.start_point[0] + 1,
                     source_name=scope_name,
@@ -561,12 +571,32 @@ class JavaScriptExtractor(LanguageExtractor):
         else:
             # Side-effect import: import 'module'
             refs.append(self._make_reference(
-                target_name=path,
+                target_name=sf_target if sf_target else path,
                 kind="import",
                 line=node.start_point[0] + 1,
                 source_name=scope_name,
                 import_path=path,
             ))
+
+    @staticmethod
+    def _resolve_salesforce_import_target(path: str) -> str | None:
+        """Map a @salesforce/* import path to a symbol target name.
+
+        Returns None for non-Salesforce paths.
+        """
+        if not path.startswith("@salesforce/"):
+            return None
+        if path.startswith("@salesforce/apex/"):
+            # "@salesforce/apex/AccountHandler.getAccounts" -> "AccountHandler.getAccounts"
+            return path[len("@salesforce/apex/"):]
+        if path.startswith("@salesforce/schema/"):
+            # "@salesforce/schema/Account.Name" -> "Account.Name"
+            return path[len("@salesforce/schema/"):]
+        if path.startswith("@salesforce/label/"):
+            ref = path[len("@salesforce/label/"):]
+            # Strip "c." namespace prefix: "c.MyLabel" -> "MyLabel"
+            return ref[2:] if ref.startswith("c.") else ref
+        return None
 
     def _extract_call(self, node, source, refs, scope_name):
         func_node = node.child_by_field_name("function")
