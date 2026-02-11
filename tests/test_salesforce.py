@@ -433,12 +433,10 @@ class TestSfXmlLwcMetadata:
         symbols = sfxml_extractor.extract_symbols(
             tree, source, "lwc/accountList/accountList.js-meta.xml"
         )
-        names = [s["name"] for s in symbols]
-        # Should derive name from file path or masterLabel
-        assert len(symbols) > 0
-        # The LightningComponentBundle should be extracted
-        bundle = next(s for s in symbols if s["kind"] == "class")
-        assert bundle is not None
+        # Sidecar .js-meta.xml files should NOT produce top-level class
+        # symbols — the primary .js file already provides the canonical
+        # symbol.  This prevents duplicate search results (Issue 8).
+        assert len(symbols) == 0
 
 
 class TestSfXmlProfilePermissions:

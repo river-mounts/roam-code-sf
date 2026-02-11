@@ -104,7 +104,7 @@ def map_cmd(ctx, count, full):
                         "kind": s["kind"],
                         "signature": s["signature"] or "",
                         "location": loc(s["file_path"], s["line_start"]),
-                        "pagerank": round(s["pagerank"], 4),
+                        "pagerank": round(s["pagerank"] or 0, 4),
                     }
                     for s in top
                 ],
@@ -143,7 +143,7 @@ def map_cmd(ctx, count, full):
                     s["name"],
                     sig,
                     loc(s["file_path"], s["line_start"]),
-                    f"{s['pagerank']:.4f}",
+                    f"{(s['pagerank'] or 0):.4f}",
                 ])
             click.echo("Top symbols (PageRank):")
             click.echo(format_table(

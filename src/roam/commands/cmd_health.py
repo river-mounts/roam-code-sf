@@ -294,19 +294,22 @@ def health(ctx, no_framework):
             if sev_counts["INFO"]:
                 sev_parts.append(f"{sev_counts['INFO']} INFO")
             click.echo(f"Health: {issue_count} issue{'s' if issue_count != 1 else ''} "
-                        f"— {', '.join(sev_parts)}")
+                        f"-- {', '.join(sev_parts)}")
             detail = ', '.join(parts)
             if filtered_count:
                 detail += f"; {filtered_count} framework symbols filtered"
             click.echo(f"  ({detail})")
         click.echo()
+        import sys
+        sys.stdout.flush()
 
         click.echo("=== Cycles ===")
         if formatted_cycles:
             for i, cyc in enumerate(formatted_cycles, 1):
                 names = [s["name"] for s in cyc["symbols"]]
-                sev = cyc["severity"]
-                dir_note = f", {cyc['directories']} dir{'s' if cyc['directories'] != 1 else ''}"
+                sev = cyc.get("severity", "INFO")
+                dirs = cyc.get("directories", "?")
+                dir_note = f", {dirs} dir{'s' if dirs != 1 else ''}"
                 click.echo(f"  [{sev}] cycle {i} ({cyc['size']} symbols{dir_note}): {', '.join(names[:10])}")
                 if len(names) > 10:
                     click.echo(f"    (+{len(names) - 10} more)")
@@ -314,32 +317,36 @@ def health(ctx, no_framework):
             click.echo(f"  total: {len(cycles)} cycle(s)")
         else:
             click.echo("  (none)")
+        sys.stdout.flush()
 
         click.echo("\n=== God Components (degree > 20) ===")
         if god_items:
-            god_rows = [[g["severity"], g["name"], abbrev_kind(g["kind"]),
+            god_rows = [[g.get("severity", "INFO"), g["name"], abbrev_kind(g["kind"]),
                          str(g["degree"]),
-                         "util" if g["category"] == "utility" else "act",
+                         "util" if g.get("category") == "utility" else "act",
                          loc(g["file"])]
                         for g in god_items]
             click.echo(format_table(["Sev", "Name", "Kind", "Degree", "Cat", "File"],
                                     god_rows, budget=20))
         else:
             click.echo("  (none)")
+        sys.stdout.flush()
 
         click.echo("\n=== Bottlenecks (high betweenness) ===")
         if bn_items:
             bn_rows = []
             for b in bn_items:
-                bw_str = f"{b['betweenness']:.0f}" if b["betweenness"] >= 10 else f"{b['betweenness']:.1f}"
-                bn_rows.append([b["severity"], b["name"], abbrev_kind(b["kind"]),
+                bw = b.get("betweenness") or 0
+                bw_str = f"{bw:.0f}" if bw >= 10 else f"{bw:.1f}"
+                bn_rows.append([b.get("severity", "INFO"), b["name"], abbrev_kind(b["kind"]),
                                 bw_str,
-                                "util" if b["category"] == "utility" else "act",
+                                "util" if b.get("category") == "utility" else "act",
                                 loc(b["file"])])
             click.echo(format_table(["Sev", "Name", "Kind", "Betweenness", "Cat", "File"],
                                     bn_rows, budget=15))
         else:
             click.echo("  (none)")
+        sys.stdout.flush()
 
         click.echo(f"\n=== Layer Violations ({len(violations)}) ===")
         if violations:
@@ -348,8 +355,8 @@ def health(ctx, no_framework):
                 src = v_lookup.get(v["source"], {})
                 tgt = v_lookup.get(v["target"], {})
                 v_rows.append([
-                    src.get("name", "?"), f"L{v['source_layer']}",
-                    tgt.get("name", "?"), f"L{v['target_layer']}",
+                    src.get("name", "?"), f"L{v.get('source_layer', '?')}",
+                    tgt.get("name", "?"), f"L{v.get('target_layer', '?')}",
                 ])
             click.echo(format_table(["Source", "Layer", "Target", "Layer"], v_rows, budget=20))
             if len(violations) > 20:
@@ -358,3 +365,4 @@ def health(ctx, no_framework):
             click.echo("  (none)")
         else:
             click.echo("  (no layers detected)")
+        sys.stdout.flush()

@@ -50,7 +50,7 @@ class JavaScriptExtractor(LanguageExtractor):
                 self._extract_function(child, source, symbols, parent_name, exported)
             elif child.type == "generator_function_declaration":
                 self._extract_function(child, source, symbols, parent_name, exported, generator=True)
-            elif child.type == "class_declaration":
+            elif child.type in ("class_declaration", "class"):
                 self._extract_class(child, source, file_path, symbols, parent_name, exported)
             elif child.type in ("lexical_declaration", "variable_declaration"):
                 self._extract_variable_decl(child, source, file_path, symbols, parent_name, exported)
@@ -90,8 +90,15 @@ class JavaScriptExtractor(LanguageExtractor):
     def _extract_class(self, node, source, file_path, symbols, parent_name, is_exported):
         name_node = node.child_by_field_name("name")
         if name_node is None:
-            return
-        name = self.node_text(name_node, source)
+            # Anonymous default export class: derive name from file path
+            # Common in LWC: export default class extends LightningElement {}
+            import os
+            basename = os.path.basename(file_path)
+            name, _ = os.path.splitext(basename)
+            if not name:
+                return
+        else:
+            name = self.node_text(name_node, source)
         sig = f"class {name}"
         qualified = f"{parent_name}.{name}" if parent_name else name
 
