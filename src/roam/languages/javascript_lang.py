@@ -558,21 +558,40 @@ class JavaScriptExtractor(LanguageExtractor):
         # Resolve Salesforce @salesforce/* imports to meaningful target names
         sf_target = self._resolve_salesforce_import_target(path)
 
+        # Determine edge kind based on import type
+        # @salesforce/apex imports are effectively cross-language RPC calls
+        if path.startswith("@salesforce/apex/"):
+            edge_kind = "call"
+        else:
+            edge_kind = "import"
+
         if names:
             for name in names:
                 target = sf_target if sf_target else name
                 refs.append(self._make_reference(
                     target_name=target,
-                    kind="import",
+                    kind=edge_kind,
                     line=node.start_point[0] + 1,
                     source_name=scope_name,
                     import_path=path,
                 ))
+                # For @salesforce/apex/ClassName.methodName, also create an
+                # edge to the Apex class itself so that `roam symbol ClassName`
+                # and `roam impact ClassName` include this LWC component.
+                if edge_kind == "call" and sf_target and "." in sf_target:
+                    class_name = sf_target.split(".")[0]
+                    refs.append(self._make_reference(
+                        target_name=class_name,
+                        kind="call",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                        import_path=path,
+                    ))
         else:
             # Side-effect import: import 'module'
             refs.append(self._make_reference(
                 target_name=sf_target if sf_target else path,
-                kind="import",
+                kind=edge_kind,
                 line=node.start_point[0] + 1,
                 source_name=scope_name,
                 import_path=path,

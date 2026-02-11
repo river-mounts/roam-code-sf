@@ -711,10 +711,13 @@ class TestLwcSalesforceImports:
         tree = parser.parse(code)
         refs = ext.extract_references(tree, code, "accountList.js")
 
-        import_refs = [r for r in refs if r["kind"] == "import"]
-        assert len(import_refs) >= 1
+        # @salesforce/apex imports produce "call" edges (cross-language RPC)
+        call_refs = [r for r in refs if r["kind"] == "call"]
+        assert len(call_refs) >= 1
         # The target should be the Apex qualified name, not the JS local binding
-        assert any(r["target_name"] == "AccountHandler.getAccounts" for r in import_refs)
+        assert any(r["target_name"] == "AccountHandler.getAccounts" for r in call_refs)
+        # Should also have a call edge to the class itself
+        assert any(r["target_name"] == "AccountHandler" for r in call_refs)
 
     def test_salesforce_schema_import(self):
         from tree_sitter_language_pack import get_parser
@@ -846,11 +849,11 @@ class TestSalesforceImportResolution:
             "lwc/accountList/accountList.js": 20,
         }
 
-        # LWC import reference
+        # LWC import reference (now "call" kind for apex imports)
         references = [{
             "source_name": None,
             "target_name": "AccountController.getAccounts",
-            "kind": "import",
+            "kind": "call",
             "line": 2,
             "import_path": "@salesforce/apex/AccountController.getAccounts",
             "source_file": "lwc/accountList/accountList.js",
@@ -889,7 +892,7 @@ class TestSalesforceImportResolution:
         references = [{
             "source_name": None,
             "target_name": "retailerhub_BasketController.getBasketItems",
-            "kind": "import",
+            "kind": "call",
             "line": 2,
             "import_path": "@salesforce/apex/retailerhub_BasketController.getBasketItems",
             "source_file": "lwc/basketView/basketView.js",
@@ -1795,3 +1798,493 @@ class TestAuraLabelAndDataService:
         refs = ext.extract_references(tree, source, "RecordView.cmp")
         targets = {r["target_name"] for r in refs}
         assert "Account" in targets
+
+
+# ============================================================================
+# Priority 1: Missing cross-language edge tests
+# ============================================================================
+
+
+class TestP1A_LwcApexCallEdges:
+    """P1A: LWC @salesforce/apex imports should create 'call' edges
+    to both the Apex method and the Apex class."""
+
+    def test_apex_import_creates_call_edges(self):
+        """@salesforce/apex import should create 'call' (not 'import') edges."""
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = b"import uploadImage from '@salesforce/apex/CloudinaryService.uploadImage';\n"
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "cloudinaryUpload.js")
+
+        call_refs = [r for r in refs if r["kind"] == "call"]
+        # Should have call edges to both method and class
+        targets = {r["target_name"] for r in call_refs}
+        assert "CloudinaryService.uploadImage" in targets, "Missing call edge to method"
+        assert "CloudinaryService" in targets, "Missing call edge to class"
+
+    def test_apex_import_not_import_kind(self):
+        """@salesforce/apex imports should NOT produce 'import' kind edges."""
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = b"import getAccounts from '@salesforce/apex/AccountHandler.getAccounts';\n"
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "accountList.js")
+
+        import_refs = [r for r in refs if r["kind"] == "import"
+                       and r.get("import_path", "").startswith("@salesforce/apex/")]
+        assert len(import_refs) == 0, "Apex imports should be 'call' kind, not 'import'"
+
+    def test_apex_import_class_edge_resolution(self):
+        """LWC @salesforce/apex import should resolve to both the Apex method
+        AND the Apex class, enabling `roam symbol ClassName` to show the LWC."""
+        from roam.index.relations import resolve_references
+
+        apex_class_sym = {
+            "id": 1, "file_id": 10, "file_path": "classes/CloudinaryService.cls",
+            "name": "CloudinaryService", "qualified_name": "CloudinaryService",
+            "kind": "class", "is_exported": True, "line_start": 1,
+        }
+        apex_method_sym = {
+            "id": 2, "file_id": 10, "file_path": "classes/CloudinaryService.cls",
+            "name": "uploadImage", "qualified_name": "CloudinaryService.uploadImage",
+            "kind": "method", "is_exported": True, "line_start": 3,
+        }
+        lwc_class_sym = {
+            "id": 3, "file_id": 20, "file_path": "lwc/cloudinaryUpload/cloudinaryUpload.js",
+            "name": "CloudinaryUpload", "qualified_name": "CloudinaryUpload",
+            "kind": "class", "is_exported": True, "line_start": 4,
+        }
+
+        symbols_by_name = {
+            "CloudinaryService": [apex_class_sym],
+            "uploadImage": [apex_method_sym],
+            "CloudinaryUpload": [lwc_class_sym],
+        }
+        files_by_path = {
+            "classes/CloudinaryService.cls": 10,
+            "lwc/cloudinaryUpload/cloudinaryUpload.js": 20,
+        }
+
+        # Simulate the two references created by the JS extractor for apex imports
+        references = [
+            {
+                "source_name": None,
+                "target_name": "CloudinaryService.uploadImage",
+                "kind": "call",
+                "line": 1,
+                "import_path": "@salesforce/apex/CloudinaryService.uploadImage",
+                "source_file": "lwc/cloudinaryUpload/cloudinaryUpload.js",
+            },
+            {
+                "source_name": None,
+                "target_name": "CloudinaryService",
+                "kind": "call",
+                "line": 1,
+                "import_path": "@salesforce/apex/CloudinaryService.uploadImage",
+                "source_file": "lwc/cloudinaryUpload/cloudinaryUpload.js",
+            },
+        ]
+
+        edges = resolve_references(references, symbols_by_name, files_by_path)
+        target_ids = {e["target_id"] for e in edges}
+        # Should have edges to BOTH the method and the class
+        assert 1 in target_ids, "Missing edge to CloudinaryService class"
+        assert 2 in target_ids, "Missing edge to uploadImage method"
+
+    def test_multiple_apex_imports(self):
+        """Multiple @salesforce/apex imports in one file should each produce edges."""
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = (
+            b"import getResults from '@salesforce/apex/ers_DatatableController.getReturnResults';\n"
+            b"import getMerged from '@salesforce/apex/DesignAliasDomain.getMergedDesignAliasAndGridRefs';\n"
+            b"import createRecords from '@salesforce/apex/DesignAliasDomain.createAliasRecords';\n"
+        )
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "myComponent.js")
+
+        call_refs = [r for r in refs if r["kind"] == "call"]
+        targets = {r["target_name"] for r in call_refs}
+
+        # Method-level edges
+        assert "ers_DatatableController.getReturnResults" in targets
+        assert "DesignAliasDomain.getMergedDesignAliasAndGridRefs" in targets
+        assert "DesignAliasDomain.createAliasRecords" in targets
+
+        # Class-level edges
+        assert "ers_DatatableController" in targets
+        assert "DesignAliasDomain" in targets
+
+    def test_non_apex_salesforce_import_stays_import(self):
+        """@salesforce/schema and @salesforce/label should remain 'import' kind."""
+        from tree_sitter_language_pack import get_parser
+        from roam.languages.javascript_lang import JavaScriptExtractor
+
+        parser = get_parser("javascript")
+        ext = JavaScriptExtractor()
+        code = (
+            b"import ACCOUNT_NAME from '@salesforce/schema/Account.Name';\n"
+            b"import greeting from '@salesforce/label/c.Greeting';\n"
+        )
+        tree = parser.parse(code)
+        refs = ext.extract_references(tree, code, "test.js")
+
+        # These should be 'import' kind, not 'call'
+        for ref in refs:
+            assert ref["kind"] == "import", (
+                f"Non-apex SF import should be 'import' kind, got '{ref['kind']}' "
+                f"for target '{ref['target_name']}'"
+            )
+
+
+class TestP1C_FlowApexInvocable:
+    """P1C: Flow actionCalls with actionType=apex should create 'call' edges."""
+
+    def test_flow_apex_action_creates_call_edge(self, sfxml_extractor, xml_parser):
+        """Flow actionCalls with actionType=apex should produce a 'call' edge."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionCalls>
+        <name>Invoke_Handler</name>
+        <actionName>OrderProcessor</actionName>
+        <actionType>apex</actionType>
+    </actionCalls>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "flows/Process_Order.flow-meta.xml"
+        )
+        call_refs = [r for r in refs if r["kind"] == "call"]
+        assert any(r["target_name"] == "OrderProcessor" for r in call_refs), \
+            "Flow Apex actionCalls should create a 'call' edge"
+
+    def test_flow_non_apex_action_creates_reference(self, sfxml_extractor, xml_parser):
+        """Flow actionCalls with non-apex actionType should produce 'reference' edges."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionCalls>
+        <name>Send_Email</name>
+        <actionName>emailSimple</actionName>
+        <actionType>emailSimple</actionType>
+    </actionCalls>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "flows/Send_Notification.flow-meta.xml"
+        )
+        # Should NOT have a 'call' edge for non-apex action
+        call_refs = [r for r in refs if r["kind"] == "call" and r["target_name"] == "emailSimple"]
+        assert len(call_refs) == 0
+        # Should have a 'reference' edge
+        ref_refs = [r for r in refs if r["kind"] == "reference" and r["target_name"] == "emailSimple"]
+        assert len(ref_refs) >= 1
+
+    def test_flow_multiple_apex_actions(self, sfxml_extractor, xml_parser):
+        """Multiple Apex actionCalls in one Flow should each produce call edges."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionCalls>
+        <name>Validate</name>
+        <actionName>ValidationService</actionName>
+        <actionType>apex</actionType>
+    </actionCalls>
+    <actionCalls>
+        <name>Process</name>
+        <actionName>ProcessingEngine</actionName>
+        <actionType>apex</actionType>
+    </actionCalls>
+    <actionCalls>
+        <name>Notify</name>
+        <actionName>emailAlert</actionName>
+        <actionType>emailAlert</actionType>
+    </actionCalls>
+</Flow>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "flows/Complex_Flow.flow-meta.xml"
+        )
+        call_refs = [r for r in refs if r["kind"] == "call"]
+        call_targets = {r["target_name"] for r in call_refs}
+        assert "ValidationService" in call_targets
+        assert "ProcessingEngine" in call_targets
+        assert "emailAlert" not in call_targets
+
+
+class TestP1D_ApexLabelReference:
+    """P1D: Apex Label.X (without System prefix) should create reference edges."""
+
+    def test_bare_label_reference(self, apex_extractor, apex_parser):
+        """Label.MyLabel (without System.) should be extracted as a reference."""
+        tree, source = _parse_apex(apex_parser, """
+public class LabelUser {
+    public String getLabel() {
+        return Label.Welcome_Message;
+    }
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "LabelUser.cls")
+        refs = apex_extractor.extract_references(tree, source, "LabelUser.cls")
+        targets = {r["target_name"] for r in refs}
+        assert "Welcome_Message" in targets
+
+    def test_both_system_label_and_bare_label(self, apex_extractor, apex_parser):
+        """Both System.Label.X and Label.X should produce references."""
+        tree, source = _parse_apex(apex_parser, """
+public class MultiLabel {
+    public void labels() {
+        String a = System.Label.Label_A;
+        String b = Label.Label_B;
+    }
+}
+""")
+        apex_extractor.extract_symbols(tree, source, "MultiLabel.cls")
+        refs = apex_extractor.extract_references(tree, source, "MultiLabel.cls")
+        targets = {r["target_name"] for r in refs}
+        assert "Label_A" in targets, "System.Label.X should extract label name"
+        assert "Label_B" in targets, "Label.X should extract label name"
+
+
+class TestP1F_TriggerHandlerMetadata:
+    """P1F: Custom metadata Trigger_Handler records should create edges
+    to handler Apex classes."""
+
+    def test_handler_class_reference(self, sfxml_extractor, xml_parser):
+        """Trigger_Handler metadata with Handler_Class__c should reference the Apex class."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Account Trigger Handler</label>
+    <values>
+        <field>Handler_Class__c</field>
+        <value>AccountTriggerHandler</value>
+    </values>
+    <values>
+        <field>Object__c</field>
+        <value>Account</value>
+    </values>
+</CustomMetadata>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source,
+            "customMetadata/Trigger_Handler.AccountTriggerHandler.md-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "AccountTriggerHandler" in ref_targets, \
+            "Handler_Class__c value should create a reference to the handler class"
+
+    def test_non_class_field_not_extracted(self, sfxml_extractor, xml_parser):
+        """Custom metadata fields not matching class patterns should not produce refs."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Some Config</label>
+    <values>
+        <field>Enabled__c</field>
+        <value>true</value>
+    </values>
+    <values>
+        <field>Max_Retries__c</field>
+        <value>3</value>
+    </values>
+</CustomMetadata>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "customMetadata/Config.SomeConfig.md-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "true" not in ref_targets
+        assert "3" not in ref_targets
+
+    def test_apex_class_field_reference(self, sfxml_extractor, xml_parser):
+        """Fields with 'Class' in the name should extract class references."""
+        tree, source = _parse_xml(xml_parser, """<?xml version="1.0" encoding="UTF-8"?>
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Apex Config</label>
+    <values>
+        <field>Apex_Class__c</field>
+        <value>OrderProcessor</value>
+    </values>
+</CustomMetadata>
+""")
+        refs = sfxml_extractor.extract_references(
+            tree, source, "customMetadata/Apex_Config.Order.md-meta.xml"
+        )
+        ref_targets = {r["target_name"] for r in refs}
+        assert "OrderProcessor" in ref_targets
+
+
+class TestP1_E2E_CrossLanguageEdges:
+    """End-to-end test: full Salesforce project with all cross-language edge types."""
+
+    @pytest.fixture(scope="class")
+    def cross_lang_project(self, tmp_path_factory):
+        """Create a Salesforce project with all P1 cross-language patterns."""
+        proj = tmp_path_factory.mktemp("cross_lang_project")
+
+        # Apex class with @AuraEnabled method
+        classes_dir = proj / "force-app" / "main" / "default" / "classes"
+        classes_dir.mkdir(parents=True)
+        (classes_dir / "CloudinaryService.cls").write_text(
+            'public class CloudinaryService {\n'
+            '    @AuraEnabled\n'
+            '    public static String uploadImage(String base64Data) {\n'
+            '        String label = Label.Upload_Success;\n'
+            '        return \'ok\';\n'
+            '    }\n'
+            '}\n'
+        )
+        (classes_dir / "CloudinaryService.cls-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+            '    <apiVersion>58.0</apiVersion>\n'
+            '    <status>Active</status>\n'
+            '</ApexClass>\n'
+        )
+
+        # Apex invocable class
+        (classes_dir / "OrderProcessor.cls").write_text(
+            'public class OrderProcessor {\n'
+            '    @InvocableMethod(label=\'Process Order\')\n'
+            '    public static void processOrders(List<Id> orderIds) {\n'
+            '        System.debug(\'processing\');\n'
+            '    }\n'
+            '}\n'
+        )
+        (classes_dir / "OrderProcessor.cls-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+            '    <apiVersion>58.0</apiVersion>\n'
+            '    <status>Active</status>\n'
+            '</ApexClass>\n'
+        )
+
+        # Trigger handler class
+        (classes_dir / "AccountTriggerHandler.cls").write_text(
+            'public class AccountTriggerHandler {\n'
+            '    public void run() {\n'
+            '        System.debug(\'handler\');\n'
+            '    }\n'
+            '}\n'
+        )
+        (classes_dir / "AccountTriggerHandler.cls-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+            '    <apiVersion>58.0</apiVersion>\n'
+            '    <status>Active</status>\n'
+            '</ApexClass>\n'
+        )
+
+        # LWC that imports Apex method and label
+        lwc_dir = proj / "force-app" / "main" / "default" / "lwc" / "cloudinaryUpload"
+        lwc_dir.mkdir(parents=True)
+        (lwc_dir / "cloudinaryUpload.js").write_text(
+            "import { LightningElement } from 'lwc';\n"
+            "import uploadImage from '@salesforce/apex/CloudinaryService.uploadImage';\n"
+            "import SUCCESS_LABEL from '@salesforce/label/c.Upload_Success';\n"
+            "\n"
+            "export default class CloudinaryUpload extends LightningElement {\n"
+            "    async handleUpload() {\n"
+            "        await uploadImage({ base64Data: this.data });\n"
+            "    }\n"
+            "}\n"
+        )
+        (lwc_dir / "cloudinaryUpload.js-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+            '    <apiVersion>58.0</apiVersion>\n'
+            '    <isExposed>true</isExposed>\n'
+            '</LightningComponentBundle>\n'
+        )
+
+        # Custom Labels
+        labels_dir = proj / "force-app" / "main" / "default" / "labels"
+        labels_dir.mkdir(parents=True)
+        (labels_dir / "CustomLabels.labels-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<CustomLabels xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+            '    <labels>\n'
+            '        <fullName>Upload_Success</fullName>\n'
+            '        <language>en_US</language>\n'
+            '        <value>Upload Successful</value>\n'
+            '    </labels>\n'
+            '</CustomLabels>\n'
+        )
+
+        # Flow that calls Apex invocable
+        flows_dir = proj / "force-app" / "main" / "default" / "flows"
+        flows_dir.mkdir(parents=True)
+        (flows_dir / "Process_Order.flow-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<Flow xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+            '    <label>Process Order</label>\n'
+            '    <actionCalls>\n'
+            '        <name>Invoke_Processor</name>\n'
+            '        <actionName>OrderProcessor</actionName>\n'
+            '        <actionType>apex</actionType>\n'
+            '    </actionCalls>\n'
+            '</Flow>\n'
+        )
+
+        # Custom Metadata: Trigger_Handler
+        cmd_dir = proj / "force-app" / "main" / "default" / "customMetadata"
+        cmd_dir.mkdir(parents=True)
+        (cmd_dir / "Trigger_Handler.AccountTriggerHandler.md-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata">\n'
+            '    <label>Account Trigger Handler</label>\n'
+            '    <values>\n'
+            '        <field>Handler_Class__c</field>\n'
+            '        <value>AccountTriggerHandler</value>\n'
+            '    </values>\n'
+            '</CustomMetadata>\n'
+        )
+
+        # Aura component with $Label reference
+        aura_dir = proj / "force-app" / "main" / "default" / "aura" / "UploadCard"
+        aura_dir.mkdir(parents=True)
+        (aura_dir / "UploadCard.cmp").write_text(
+            '<aura:component>\n'
+            '    <lightning:button label="{!$Label.c.Upload_Success}"/>\n'
+            '</aura:component>\n'
+        )
+
+        git_init(proj)
+        out, rc = roam("index", cwd=str(proj))
+        assert rc == 0, f"Index failed: {out}"
+        return proj
+
+    def test_lwc_apex_call_edge(self, cross_lang_project):
+        """LWC should appear as a caller of the Apex class."""
+        out, rc = roam("symbol", "CloudinaryService", cwd=str(cross_lang_project))
+        assert rc == 0
+        assert "cloudinaryUpload" in out.lower() or "CloudinaryUpload" in out, \
+            f"LWC should be a caller of CloudinaryService. Output:\n{out}"
+
+    def test_lwc_apex_method_edge(self, cross_lang_project):
+        """LWC should appear as a caller of the Apex method."""
+        out, rc = roam("symbol", "uploadImage", cwd=str(cross_lang_project))
+        assert rc == 0
+        assert "cloudinaryUpload" in out.lower() or "CloudinaryUpload" in out, \
+            f"LWC should be a caller of uploadImage. Output:\n{out}"
+
+    def test_flow_apex_call_edge(self, cross_lang_project):
+        """Flow should have a callee edge to the Apex invocable class."""
+        out, rc = roam("symbol", "Process Order", cwd=str(cross_lang_project))
+        assert rc == 0
+        assert "OrderProcessor" in out, \
+            f"Flow should have OrderProcessor as a callee. Output:\n{out}"
+
+    def test_impact_includes_lwc(self, cross_lang_project):
+        """Impact analysis of CloudinaryService should include the LWC file."""
+        out, rc = roam("impact", "CloudinaryService", cwd=str(cross_lang_project))
+        assert rc == 0
+        assert "cloudinaryUpload" in out, \
+            f"Impact should include cloudinaryUpload.js. Output:\n{out}"
