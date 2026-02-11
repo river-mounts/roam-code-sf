@@ -798,6 +798,107 @@ class TestSalesforceImportResolution:
         matches = _resolve_salesforce_import("./utils/helper", [{"name": "helper"}])
         assert matches == []
 
+    def test_apex_namespace_prefix_resolution(self):
+        """Namespace-prefixed imports like retailerhub_BasketController resolve
+        to BasketController.cls when the unprefixed file exists."""
+        from roam.index.relations import _resolve_salesforce_import
+
+        candidates = [
+            {"file_path": "force-app/main/default/classes/BasketController.cls", "name": "getBasketItems"},
+            {"file_path": "force-app/main/default/classes/OrderController.cls", "name": "getOrders"},
+        ]
+        matches = _resolve_salesforce_import(
+            "@salesforce/apex/retailerhub_BasketController.getBasketItems",
+            candidates,
+        )
+        assert len(matches) == 1
+        assert matches[0]["name"] == "getBasketItems"
+
+    def test_lwc_apex_import_edge_resolution(self):
+        """LWC @salesforce/apex imports should resolve to Apex method symbols
+        even when target_name is the compound ClassName.methodName."""
+        from roam.index.relations import resolve_references
+
+        # Simulate: Apex class with method
+        apex_class_sym = {
+            "id": 1, "file_id": 10, "file_path": "classes/AccountController.cls",
+            "name": "AccountController", "qualified_name": "AccountController",
+            "kind": "class", "is_exported": True, "line_start": 1,
+        }
+        apex_method_sym = {
+            "id": 2, "file_id": 10, "file_path": "classes/AccountController.cls",
+            "name": "getAccounts", "qualified_name": "AccountController.getAccounts",
+            "kind": "method", "is_exported": True, "line_start": 3,
+        }
+        lwc_class_sym = {
+            "id": 3, "file_id": 20, "file_path": "lwc/accountList/accountList.js",
+            "name": "AccountList", "qualified_name": "AccountList",
+            "kind": "class", "is_exported": True, "line_start": 4,
+        }
+
+        symbols_by_name = {
+            "AccountController": [apex_class_sym],
+            "getAccounts": [apex_method_sym],
+            "AccountList": [lwc_class_sym],
+        }
+        files_by_path = {
+            "classes/AccountController.cls": 10,
+            "lwc/accountList/accountList.js": 20,
+        }
+
+        # LWC import reference
+        references = [{
+            "source_name": None,
+            "target_name": "AccountController.getAccounts",
+            "kind": "import",
+            "line": 2,
+            "import_path": "@salesforce/apex/AccountController.getAccounts",
+            "source_file": "lwc/accountList/accountList.js",
+        }]
+
+        edges = resolve_references(references, symbols_by_name, files_by_path)
+        assert len(edges) == 1
+        assert edges[0]["source_id"] == 3  # AccountList
+        assert edges[0]["target_id"] == 2  # getAccounts method
+
+    def test_lwc_apex_import_with_namespace_prefix(self):
+        """LWC import with namespace prefix (e.g. retailerhub_BasketController)
+        should resolve to the unprefixed Apex class file."""
+        from roam.index.relations import resolve_references
+
+        apex_method_sym = {
+            "id": 1, "file_id": 10, "file_path": "classes/BasketController.cls",
+            "name": "getBasketItems", "qualified_name": "BasketController.getBasketItems",
+            "kind": "method", "is_exported": True, "line_start": 3,
+        }
+        lwc_class_sym = {
+            "id": 2, "file_id": 20, "file_path": "lwc/basketView/basketView.js",
+            "name": "BasketView", "qualified_name": "BasketView",
+            "kind": "class", "is_exported": True, "line_start": 4,
+        }
+
+        symbols_by_name = {
+            "getBasketItems": [apex_method_sym],
+            "BasketView": [lwc_class_sym],
+        }
+        files_by_path = {
+            "classes/BasketController.cls": 10,
+            "lwc/basketView/basketView.js": 20,
+        }
+
+        references = [{
+            "source_name": None,
+            "target_name": "retailerhub_BasketController.getBasketItems",
+            "kind": "import",
+            "line": 2,
+            "import_path": "@salesforce/apex/retailerhub_BasketController.getBasketItems",
+            "source_file": "lwc/basketView/basketView.js",
+        }]
+
+        edges = resolve_references(references, symbols_by_name, files_by_path)
+        assert len(edges) == 1
+        assert edges[0]["target_id"] == 1  # getBasketItems method
+
 
 # ============================================================================
 # Phase 2: Expanded XML reference extraction tests
@@ -1227,6 +1328,14 @@ class TestFullSalesforceE2E:
         # The Aura component references AccountController — should appear as a dep
         assert "AccountController" in out
 
+    def test_lwc_references_apex_controller(self, full_sf_project):
+        """LWC @salesforce/apex import should create a dep edge to Apex class."""
+        out, rc = roam("deps",
+                       "force-app/main/default/lwc/accountList/accountList.js",
+                       cwd=str(full_sf_project))
+        assert rc == 0
+        assert "AccountController" in out
+
 
 # ============================================================================
 # Edge-case and negative tests
@@ -1369,6 +1478,18 @@ class TestAuraEdgeCases:
         refs = ext.extract_references(tree, source, "Test.cmp")
         comp_refs = [r for r in refs if r["target_name"] == "lowerCase"]
         assert len(comp_refs) == 0
+
+    def test_controller_case_insensitive(self, xml_parser):
+        """Controller= (capital C) should be resolved the same as controller=."""
+        from roam.languages.aura_lang import AuraExtractor
+        ext = AuraExtractor()
+        tree, source = _parse_xml(xml_parser, """<aura:component Controller="BasketController">
+    <aura:attribute name="items" type="List"/>
+</aura:component>
+""")
+        refs = ext.extract_references(tree, source, "BasketItem.cmp")
+        targets = {r["target_name"] for r in refs}
+        assert "BasketController" in targets
 
 
 class TestVisualforceEdgeCases:

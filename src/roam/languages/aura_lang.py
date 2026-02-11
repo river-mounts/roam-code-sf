@@ -290,7 +290,7 @@ class AuraExtractor(LanguageExtractor):
                             elif attr_child.type == "AttValue":
                                 value_node = attr_child
                         if name_node and value_node:
-                            k = self.node_text(name_node, source)
+                            k = self.node_text(name_node, source).lower()
                             v = self.node_text(value_node, source).strip('"\'')
                             attrs[k] = v
         return attrs
