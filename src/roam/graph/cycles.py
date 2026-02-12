@@ -49,16 +49,21 @@ def format_cycles(
     if not all_ids:
         return []
 
-    placeholders = ",".join("?" for _ in all_ids)
-    rows = conn.execute(
-        f"SELECT s.id, s.name, s.kind, f.path AS file_path "
-        f"FROM symbols s JOIN files f ON s.file_id = f.id "
-        f"WHERE s.id IN ({placeholders})",
-        list(all_ids),
-    ).fetchall()
+    # Batch in chunks of 500 to avoid exceeding SQLite's
+    # SQLITE_MAX_VARIABLE_NUMBER limit on large repositories.
+    all_ids_list = list(all_ids)
     lookup: dict[int, dict] = {}
-    for sid, name, kind, fpath in rows:
-        lookup[sid] = {"id": sid, "name": name, "kind": kind, "file_path": fpath}
+    for i in range(0, len(all_ids_list), 500):
+        batch = all_ids_list[i:i+500]
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"SELECT s.id, s.name, s.kind, f.path AS file_path "
+            f"FROM symbols s JOIN files f ON s.file_id = f.id "
+            f"WHERE s.id IN ({placeholders})",
+            batch,
+        ).fetchall()
+        for sid, name, kind, fpath in rows:
+            lookup[sid] = {"id": sid, "name": name, "kind": kind, "file_path": fpath}
 
     result = []
     for cycle in cycles:
