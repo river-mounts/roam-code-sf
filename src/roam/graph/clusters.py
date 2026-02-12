@@ -61,25 +61,28 @@ def label_clusters(
     for node_id, cid in clusters.items():
         groups[cid].append(node_id)
 
-    # Fetch file paths, kind, and pagerank for all symbols in one query
+    # Fetch file paths, kind, and pagerank for all symbols in batches
+    # to avoid exceeding SQLite's SQLITE_MAX_VARIABLE_NUMBER limit.
     all_ids = list(clusters.keys())
-    placeholders = ",".join("?" for _ in all_ids)
-    rows = conn.execute(
-        f"SELECT s.id, s.name, s.kind, f.path, COALESCE(gm.pagerank, 0) as pagerank "
-        f"FROM symbols s "
-        f"JOIN files f ON s.file_id = f.id "
-        f"LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-        f"WHERE s.id IN ({placeholders})",
-        all_ids,
-    ).fetchall()
     id_to_path: dict[int, str] = {}
     id_to_info: dict[int, dict] = {}
-    for r in rows:
-        id_to_path[r["id"]] = r["path"]
-        id_to_info[r["id"]] = {
-            "name": r["name"], "kind": r["kind"],
-            "pagerank": r["pagerank"],
-        }
+    for i in range(0, len(all_ids), 500):
+        batch = all_ids[i:i+500]
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"SELECT s.id, s.name, s.kind, f.path, COALESCE(gm.pagerank, 0) as pagerank "
+            f"FROM symbols s "
+            f"JOIN files f ON s.file_id = f.id "
+            f"LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            f"WHERE s.id IN ({placeholders})",
+            batch,
+        ).fetchall()
+        for r in rows:
+            id_to_path[r["id"]] = r["path"]
+            id_to_info[r["id"]] = {
+                "name": r["name"], "kind": r["kind"],
+                "pagerank": r["pagerank"],
+            }
 
     labels: dict[int, str] = {}
     total_nodes = len(clusters)
