@@ -90,6 +90,13 @@ def resolve_references(
                 target_name, source_file, symbols_by_name,
                 ref_kind=kind, source_parent=source_parent, import_map=import_map,
             )
+            if target_sym is None:
+                # Overloaded methods: _best_match looks up by simple name but
+                # target_name is a qualified name (e.g. "Class.method"), so the
+                # lookup fails.  Fall back to the qualified-name matches directly,
+                # preferring the definition in the same file as the caller.
+                same_file = [s for s in qn_matches if s.get("file_path") == source_file]
+                target_sym = same_file[0] if same_file else qn_matches[0]
         # If the qualified match is in a different file, prefer a local
         # symbol (same-file, then same-directory for Go packages).
         if target_sym is not None and target_sym.get("file_path") != source_file:
