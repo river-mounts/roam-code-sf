@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import roam, git_init
-from roam.index.relations import _closest_symbol, _match_import_path
+from roam.index.relations import _closest_symbol, _match_import_path, resolve_references
 from roam.index.parser import extract_vue_template, scan_template_references
 
 
@@ -770,3 +770,117 @@ class TestCallbackArgumentEdge:
         out, rc = roam("symbol", "handleKeyboard", cwd=root)
         assert rc == 0
         assert "handleKeyboard" in out
+
+
+# ---- Bug: Overloaded method references silently dropped ----
+
+class TestOverloadedMethodResolution:
+    """Verify resolve_references handles multiple symbols with the same qualified_name."""
+
+    def test_overloaded_qualified_name_produces_edge(self):
+        """Two symbols share a qualified_name (method overloads) — reference should resolve, not drop."""
+        # Simulate two overloads of Class.method in different files
+        symbols_by_name = {
+            "method": [
+                {
+                    "id": 1,
+                    "name": "method",
+                    "qualified_name": "MyClass.method",
+                    "file_id": 10,
+                    "file_path": "src/MyClass.cls",
+                    "kind": "method",
+                },
+                {
+                    "id": 2,
+                    "name": "method",
+                    "qualified_name": "MyClass.method",
+                    "file_id": 10,
+                    "file_path": "src/MyClass.cls",
+                    "kind": "method",
+                },
+            ],
+            "caller": [
+                {
+                    "id": 3,
+                    "name": "caller",
+                    "qualified_name": "Service.caller",
+                    "file_id": 20,
+                    "file_path": "src/Service.cls",
+                    "kind": "method",
+                },
+            ],
+        }
+        files_by_path = {
+            "src/MyClass.cls": 10,
+            "src/Service.cls": 20,
+        }
+        references = [
+            {
+                "source_name": "caller",
+                "target_name": "MyClass.method",
+                "kind": "call",
+                "line": 5,
+                "source_file": "src/Service.cls",
+            },
+        ]
+
+        edges = resolve_references(references, symbols_by_name, files_by_path)
+
+        # Before the fix, this returned [] because _best_match couldn't find
+        # "MyClass.method" in symbols_by_name (keyed by simple name "method").
+        assert len(edges) == 1
+        assert edges[0]["source_id"] == 3
+        assert edges[0]["target_id"] in (1, 2)  # either overload is acceptable
+        assert edges[0]["kind"] == "call"
+
+    def test_overloaded_prefers_same_file(self):
+        """When caller is in the same file as one overload, that overload is preferred."""
+        symbols_by_name = {
+            "method": [
+                {
+                    "id": 1,
+                    "name": "method",
+                    "qualified_name": "MyClass.method",
+                    "file_id": 10,
+                    "file_path": "src/MyClass.cls",
+                    "kind": "method",
+                },
+                {
+                    "id": 2,
+                    "name": "method",
+                    "qualified_name": "MyClass.method",
+                    "file_id": 20,
+                    "file_path": "src/Service.cls",
+                    "kind": "method",
+                },
+            ],
+            "caller": [
+                {
+                    "id": 3,
+                    "name": "caller",
+                    "qualified_name": "Service.caller",
+                    "file_id": 20,
+                    "file_path": "src/Service.cls",
+                    "kind": "method",
+                },
+            ],
+        }
+        files_by_path = {
+            "src/MyClass.cls": 10,
+            "src/Service.cls": 20,
+        }
+        references = [
+            {
+                "source_name": "caller",
+                "target_name": "MyClass.method",
+                "kind": "call",
+                "line": 5,
+                "source_file": "src/Service.cls",
+            },
+        ]
+
+        edges = resolve_references(references, symbols_by_name, files_by_path)
+
+        assert len(edges) == 1
+        # Should prefer the overload in the same file as the caller
+        assert edges[0]["target_id"] == 2
